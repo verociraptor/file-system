@@ -143,8 +143,16 @@ static int bitmap_reset(int start, int num, int ibit)
 // should not be more than MAX_NAME-1 in length
 static int illegal_filename(char* name)
 {
-  /* YOUR CODE */
-  return 1; 
+  // Check if name is non empty or too long
+  if(name==NULL || strlen(name)==0 || strlen(name)>=MAX_NAME-1){ return 1; }
+  
+  // Check if entries only contain allowed elements
+  for(int i=0; name[i]!="\0";i++){
+  	if !(isalpha(name[i]) || isdigit(name[i]) || 
+  		name[i] == "." || name[i] == "_" || name[i] == "-" ){ return 1; }
+  }
+
+  return 0;  
 }
 
 // return the child inode of the given file name 'fname' from the
@@ -389,8 +397,95 @@ int create_file_or_directory(int type, char* pathname)
 // -1 if general error, -2 if directory not empty, -3 if wrong type
 int remove_inode(int type, int parent_inode, int child_inode)
 {
-  /* YOUR CODE */
-  return -1;
+   dprintf("... remove inode %d\n", child_inode);
+
+  // load the disk sector containing the child inode
+  int inode_sector = INODE_TABLE_START_SECTOR+child_inode/INODES_PER_SECTOR;
+  char inode_buffer[SECTOR_SIZE];
+  if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
+  dprintf("... load inode table for child inode from disk sector %d\n", inode_sector);
+
+  // get the child inode
+  int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
+  int offset = child_inode-inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t* child = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+
+  // check for right type
+  if(child->type!=type){
+    dprintf("... error: the type parameter does not match the actual inode type\n");
+    return -3;
+  }
+
+  // check if child is non-empty directory
+  if(child->type==1 && child->size>0){
+    dprintf("... error: inode is non-empty directory\n");
+    return -2;
+  }
+
+  // get the disk sector containing the parent inode
+  inode_sector = INODE_TABLE_START_SECTOR+parent_inode/INODES_PER_SECTOR;
+  if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
+  dprintf("... load inode table for parent inode %d from disk sector %d\n",
+   parent_inode, inode_sector);
+
+  // get the parent inode
+  inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
+  offset = parent_inode-inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t* parent = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+  dprintf("... get parent inode %d (size=%d, type=%d)\n",
+   parent_inode, parent->size, parent->type);
+
+  // check if parent is directory
+  if(parent->type != 1) {
+    dprintf("... error: parent inode is not directory\n");
+    return -3;
+  }
+
+  // check if parent is non-empty
+  if(parent->size < 1) {
+    dprintf("... error: parent directory has no entries\n");
+    return -1;
+  }
+
+  // reset bit of child inode in bitmap  
+  if (bitmap_reset(INODE_BITMAP_START_SECTOR, INODE_BITMAP_SECTORS, child_inode) < 0) {
+    dprintf("... error: reset inode in bitmap unsuccessful\n");
+    return -1; 
+  }
+
+  // check for remaining dirents from parent in that sector (otherwise reset sector bitmap)
+  int remainder = parent->size % DIRENTS_PER_SECTOR;
+  int group = parent->size/DIRENTS_PER_SECTOR;
+  if remainder == 1 {
+    // disk sector has to be freed
+    if (bitmap_reset(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, parent->data[group]) < 0) {
+    dprintf("... error: free sector in bitmap unsuccessful\n");
+    return -1; 
+    }
+    parent->data[group] = 0;
+  }
+
+  // delete the dirent and write to disk
+  char dirent_buffer[SECTOR_SIZE];
+  if(Disk_Read(parent->data[group], dirent_buffer) < 0) return -1;
+    dprintf("... load disk sector %d for dirent group %d\n", parent->data[group], group);
+  int start_entry = group*DIRENTS_PER_SECTOR;
+  offset = (parent->size-1)-start_entry;
+  dirent_t* dirent = (dirent_t*)(dirent_buffer+offset*sizeof(dirent_t));
+  memset(dirent->fname, 0, sizeof(dirent->fname));
+  dirent->inode = 0;
+  if(Disk_Write(parent->data[group], dirent_buffer) < 0) return -1;
+  dprintf("... delete dirent %d (inode=%d) from group %d, update disk sector %d\n",
+    parent->size, child_inode, group, parent->data[group]);
+
+  // update parent inode and write to disk
+  parent->size--;
+  if(Disk_Write(inode_sector, inode_buffer) < 0) return -1;
+  dprintf("... update parent inode on disk sector %d\n", inode_sector);
+
+  return 0;
 }
 
 // representing an open file
@@ -615,22 +710,41 @@ int File_Open(char* file)
 
 int File_Read(int fd, void* buffer, int size)
 {
+    //check if fd is valid index
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+    	osErrno = E_BAD_FD;
+	return -1;
+    }
+
+    open_file_t file = open_files[fd];
+
     //check if not an open file
-    if(open_files[fd].inode <= 0){
+    if(file.inode <= 0){
         dprintf("... fd=%d not an open file\n", fd);
         osErrno = E_BAD_FD;
         return -1;
     }
-  int position = open_files[fd].pos;  
-  
-  //if at end of file
-  if(position == open_files[fd].size - 1)
+  int position = file.pos;  
+  int remReadSize = 0;
+  //determine how many bytes to read
+  if(file.size - position == 0)
   {
+      //none to read		  
       return 0;
   }
-  
-  int i = 0;
+  else{
+      //if less than size is remaining, read only remaining
+      remReadSize = min(file.size - position, size);
+  	
+  }
 
+
+  /***read contents of data blocks***/
+  
+  //get disk sectors  
+  int i = 0;
+  inode_t* inode = file.inode;
+  
   //traverse through position until size
   //adding into buffer
   
@@ -664,6 +778,8 @@ int File_Close(int fd)
     return -1;
   }
 
+
+
   dprintf("... file closed successfully\n");
   open_files[fd].inode = 0;
   return 0;
@@ -677,8 +793,46 @@ int Dir_Create(char* path)
 
 int Dir_Unlink(char* path)
 {
-  /* YOUR CODE */
-  return -1;
+    // no empty path and no root directory allowed
+  if(path==NULL) {
+    dprintf("... error: empty path (NULL) for directory unlink");
+    osErrno = E_GENERAL;
+    return -1;
+  }
+
+  if(strcmp(path, "/")==0) {
+    dprintf("... error: not allowed to unlink root directory");
+    osErrno = E_ROOT_DIR;
+    return -1;
+  }
+
+  // find parent and children (if theres any)
+  int* child_inode;
+  int parent_inode = follow_path(path, &child_inode, NULL);
+  if(parent_inode < 0) {
+    dprintf("... error: directory '%s' not found\n", path);
+      osErrno = E_NO_SUCH_DIR;
+      return -1;
+  }
+
+  int remove = remove_inode(1, parent_inode, child_inode);
+
+  if (remove==-1) {
+    dprintf("... error: general error when unlinking directory");
+    osErrno = E_GENERAL;
+    return -1;
+  } else if (remove==-3) {
+    dprintf("... error: no directory, wrong type");
+    osErrno = E_NO_SUCH_DIR;
+    return -1;
+  } else if (remove==-2) {
+    dprintf("... error: directory %s not empty", path);
+    osErrno = E_DIR_NOT_EMPTY;
+    return -1;
+  } else {
+    return 0;
+  }	
+
 }
 
 int Dir_Size(char* path)
