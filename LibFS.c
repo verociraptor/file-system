@@ -624,13 +624,16 @@ int File_Read(int fd, void* buffer, int size)
   int position = open_files[fd].pos;  
   
   //if at end of file
-  if(position == size - 1)
+  if(position == open_files[fd].size - 1)
   {
       return 0;
   }
   
+  int i = 0;
+
   //traverse through position until size
   //adding into buffer
+  
   open_file_t file = open_files[fd];
   return -1;
 }
