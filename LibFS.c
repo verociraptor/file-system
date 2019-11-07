@@ -983,13 +983,101 @@ int Dir_Unlink(char* path)
 
 int Dir_Size(char* path)
 {
-  /* YOUR CODE */
-  return 0;
+  // no empty path allowed
+  if(path==NULL) {
+    dprintf("... error: empty path (NULL) given as parameter\n");
+    osErrno = E_GENERAL;
+    return -1;
+  }
+ 
+  // directory has to exist
+  int child_inode;
+  int parent_inode = follow_path(path, &child_inode, NULL);
+  if(parent_inode < 0) {
+    dprintf("... error: directory '%s' not found\n", path);
+      osErrno = E_NO_SUCH_DIR;
+      return -1;
+  }
+ 
+  // load the disk sector containing the child inode
+  int inode_sector = INODE_TABLE_START_SECTOR+child_inode/INODES_PER_SECTOR;
+  char inode_buffer[SECTOR_SIZE];
+  if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
+  dprintf("... load inode table for child inode from disk sector %d\n", inode_sector);
+ 
+  // get the child inode
+  int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
+  int offset = child_inode-inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t* child = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+ 
+  // check for type
+  if (child->type!=1) {
+    dprintf("... error: wrong type, path leads to file\n");
+    osErrno = E_GENERAL;
+    return -1;
+  }
+ 
+  return child->size*sizeof(dirent_t);
 }
 
 int Dir_Read(char* path, void* buffer, int size)
 {
-  /* YOUR CODE */
-  return -1;
+  int real_size = Dir_Size(path);
+  if(real_size<0) return -1;
+  if(real_size==0) return 0;
+ 
+  // check if size of buffer is large enough to hold all elements in the directory
+  if (size<real_size) {
+    osErrno=E_BUFFER_TOO_SMALL;
+    return -1;
+  }
+ 
+  // initialize buffer
+  memset(buffer, 0, size);
+ 
+  // load disk sector from directory
+  int inode;
+  char inode_buffer[SECTOR_SIZE];
+  int parent_inode=follow_path(path, &inode, NULL);
+  if(parent_inode<0) return -1;
+  int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
+  if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
+  dprintf("... load inode table for parent inode %d from disk sector %d\n",
+     inode, inode_sector);
+ 
+  // get the parent inode
+  int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
+  int offset = inode-inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t* dir_inode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+  dprintf("... get inode %d (size=%d, type=%d)\n",
+     inode, dir_inode->size, dir_inode->type);
+ 
+  // read the directory entries into the buffer
+  int remainder=dir_inode->size%DIRENTS_PER_SECTOR;
+  int group=dir_inode->size/DIRENTS_PER_SECTOR;
+ 
+  // a) completely filled sectors
+  for(int i=0; i<group;i++) {
+    if(Disk_Read(dir_inode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0) {
+        dprintf("... error: cant read sector %d\n", dir_inode->data[i]);
+        osErrno=E_GENERAL;
+        return -1;
+    }
+  }
+ 
+  // b) partly filled sector
+  if(remainder) {
+      if(Disk_Read(dir_inode->data[group], inode_buffer) < 0){
+        dprintf("... error: cant read sector %d\n", dir_inode->data[group]);
+            osErrno=E_GENERAL;
+            return -1;
+      }
+      strncpy((char*)buffer+group*SECTOR_SIZE, inode_buffer, remainder*sizeof(dirent_t));
+  }
+ 
+  return dir_inode->size;
 }
+
 
