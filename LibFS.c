@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
 #include "LibDisk.h"
 #include "LibFS.h"
 
@@ -101,6 +102,10 @@ int osErrno;
 static char bs_filename[1024];
 
 /* the following functions are internal helper functions */
+//find min
+int min(int num1, int num2){
+	return (num1 > num2) ? num2 : num1;
+}
 
 // check magic number in the superblock; return 1 if OK, and 0 if not
 static int check_magic()
@@ -147,9 +152,9 @@ static int illegal_filename(char* name)
   if(name==NULL || strlen(name)==0 || strlen(name)>=MAX_NAME-1){ return 1; }
   
   // Check if entries only contain allowed elements
-  for(int i=0; name[i]!="\0";i++){
-  	if !(isalpha(name[i]) || isdigit(name[i]) || 
-  		name[i] == "." || name[i] == "_" || name[i] == "-" ){ return 1; }
+  for(int i=0; i < strlen(name);i++){
+  	if(!(isalpha(name[i]) || isdigit(name[i]) || 
+  		name[i] == '.' || name[i] == '_' || name[i] == '-' )){ return 1; }
   }
 
   return 0;  
@@ -397,38 +402,39 @@ int create_file_or_directory(int type, char* pathname)
 // -1 if general error, -2 if directory not empty, -3 if wrong type
 int remove_inode(int type, int parent_inode, int child_inode)
 {
-   dprintf("... remove inode %d\n", child_inode);
-
+   
+  dprintf("... remove inode %d\n", child_inode);
+ 
   // load the disk sector containing the child inode
   int inode_sector = INODE_TABLE_START_SECTOR+child_inode/INODES_PER_SECTOR;
   char inode_buffer[SECTOR_SIZE];
   if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... load inode table for child inode from disk sector %d\n", inode_sector);
-
+ 
   // get the child inode
   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
   int offset = child_inode-inode_start_entry;
   assert(0 <= offset && offset < INODES_PER_SECTOR);
   inode_t* child = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
-
+ 
   // check for right type
   if(child->type!=type){
     dprintf("... error: the type parameter does not match the actual inode type\n");
     return -3;
   }
-
+ 
   // check if child is non-empty directory
   if(child->type==1 && child->size>0){
     dprintf("... error: inode is non-empty directory\n");
     return -2;
   }
-
+ 
   // get the disk sector containing the parent inode
   inode_sector = INODE_TABLE_START_SECTOR+parent_inode/INODES_PER_SECTOR;
   if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... load inode table for parent inode %d from disk sector %d\n",
    parent_inode, inode_sector);
-
+ 
   // get the parent inode
   inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
   offset = parent_inode-inode_start_entry;
@@ -436,37 +442,37 @@ int remove_inode(int type, int parent_inode, int child_inode)
   inode_t* parent = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
   dprintf("... get parent inode %d (size=%d, type=%d)\n",
    parent_inode, parent->size, parent->type);
-
+ 
   // check if parent is directory
   if(parent->type != 1) {
     dprintf("... error: parent inode is not directory\n");
     return -3;
   }
-
+ 
   // check if parent is non-empty
   if(parent->size < 1) {
     dprintf("... error: parent directory has no entries\n");
     return -1;
   }
-
-  // reset bit of child inode in bitmap  
+ 
+  // reset bit of child inode in bitmap
   if (bitmap_reset(INODE_BITMAP_START_SECTOR, INODE_BITMAP_SECTORS, child_inode) < 0) {
     dprintf("... error: reset inode in bitmap unsuccessful\n");
-    return -1; 
+    return -1;
   }
-
+ 
   // check for remaining dirents from parent in that sector (otherwise reset sector bitmap)
   int remainder = parent->size % DIRENTS_PER_SECTOR;
   int group = parent->size/DIRENTS_PER_SECTOR;
-  if remainder == 1 {
+  if (remainder == 1) {
     // disk sector has to be freed
     if (bitmap_reset(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, parent->data[group]) < 0) {
     dprintf("... error: free sector in bitmap unsuccessful\n");
-    return -1; 
+    return -1;
     }
     parent->data[group] = 0;
   }
-
+ 
   // delete the dirent and write to disk
   char dirent_buffer[SECTOR_SIZE];
   if(Disk_Read(parent->data[group], dirent_buffer) < 0) return -1;
@@ -475,17 +481,18 @@ int remove_inode(int type, int parent_inode, int child_inode)
   offset = (parent->size-1)-start_entry;
   dirent_t* dirent = (dirent_t*)(dirent_buffer+offset*sizeof(dirent_t));
   memset(dirent->fname, 0, sizeof(dirent->fname));
-  dirent->inode = 0;
+  dirent->inode = -1;
   if(Disk_Write(parent->data[group], dirent_buffer) < 0) return -1;
   dprintf("... delete dirent %d (inode=%d) from group %d, update disk sector %d\n",
     parent->size, child_inode, group, parent->data[group]);
-
+ 
   // update parent inode and write to disk
   parent->size--;
   if(Disk_Write(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... update parent inode on disk sector %d\n", inode_sector);
-
+ 
   return 0;
+
 }
 
 // representing an open file
@@ -659,8 +666,43 @@ int File_Create(char* file)
 
 int File_Unlink(char* file)
 {
-  //use remove_inode here
-  return -1;
+  int child_inode;
+  
+  int parent_inode = follow_path(file, &child_inode, NULL);
+
+  
+  if(child_inode >= 0) //file exists 
+  {
+     //check if file is open
+    if(is_file_open(child_inode)){
+       dprintf("... %s is an open file. Cannot unlink\n", file);
+       osErrno = E_FILE_IN_USE;
+       return -1;
+    }
+    
+   int remove = remove_inode(0, parent_inode, child_inode);
+   if(remove == -1){
+      dprintf("... error: general error when unlinking file\n");
+      osErrno = E_GENERAL;
+      return -1;
+   }
+   else if(remove == -3){
+      dprintf("... error: no file, incorrect type\n");
+      osErrno = E_NO_SUCH_FILE;
+      return -1;
+   }
+   else{
+   	return 0;
+   }
+  
+  }
+  
+  else{ //file does not exist
+  	dprintf("... %s file does not exist\n", file);
+	osErrno = E_NO_SUCH_FILE;
+	return -1;
+
+  }
 }
 
 int File_Open(char* file)
@@ -712,6 +754,7 @@ int File_Read(int fd, void* buffer, int size)
 {
     //check if fd is valid index
     if(fd < 0 || fd > MAX_OPEN_FILES){
+	dprintf("... fd=%d out of bound", fd);    
     	osErrno = E_BAD_FD;
 	return -1;
     }
@@ -726,6 +769,14 @@ int File_Read(int fd, void* buffer, int size)
     }
   int position = file.pos;  
   int remReadSize = 0;
+
+  //check if file size is empty
+  if(file.size == 0)
+  {
+	//none to read  
+	return 0;
+  }
+
   //determine how many bytes to read
   if(file.size - position == 0)
   {
@@ -734,34 +785,128 @@ int File_Read(int fd, void* buffer, int size)
   }
   else{
       //if less than size is remaining, read only remaining
+      //else pick size
       remReadSize = min(file.size - position, size);
   	
   }
+  memset(buffer, 0, remReadSize);
 
 
   /***read contents of data blocks***/
   
-  //get disk sectors  
-  int i = 0;
-  inode_t* inode = file.inode;
+  //load file's inode disk sectors
+  int inode = file.inode;
+  int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
+  char inode_buffer[SECTOR_SIZE];
+  if(Disk_Read(inode_sector, inode_buffer) < 0) { osErrno = E_GENERAL; return -1; }
+    dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+
+  //get inode
+   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
+    int offset = inode-inode_start_entry;
+    assert(0 <= offset && offset < INODES_PER_SECTOR);
+    inode_t* fileInode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+    dprintf("... inode %d (size=%d, type=%d)\n",
+	    inode, fileInode->size, fileInode->type);
+    
+    //FILES_PER_SECTOR (SECTOR_SIZE/SIZEOF(open_file_t))
+   int i = 0;
+   //read data from given datablock pointers
+   for(i = file.pos; i < remReadSize; i++){
+     if(Disk_Read(fileInode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0){
+        dprintf("... error: cant read sector %d\n", fileInode->data[i]);
+        osErrno=E_GENERAL;
+        return -1;	     
+     }
+   }
+
+   File_Seek(fd, i);
+
   
-  //traverse through position until size
-  //adding into buffer
-  
-  open_file_t file = open_files[fd];
-  return -1;
+  return remReadSize;
 }
 
 int File_Write(int fd, void* buffer, int size)
 {
-  /* YOUR CODE */
-  return -1;
+  //check if fd is valid index
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        dprintf("... fd=%d out of bound", fd);
+        osErrno = E_BAD_FD;
+        return -1;
+    }
+
+    open_file_t file = open_files[fd];
+
+    //check if not an open file
+    if(file.inode <= 0){
+        dprintf("... fd=%d not an open file\n", fd);
+        osErrno = E_BAD_FD;
+        return -1;
+    }
+
+    //check if extra data doesn't go over max sectors per file
+    if(file.pos + size > MAX_SECTORS_PER_FILE){
+	dprintf("... fd=%d cannot add %d data sectors. No more space\n", fd, size);
+	osErrno = E_FILE_TOO_BIG;
+    }
+  
+   //load file's inode disk sectors
+  int inode = file.inode;
+  int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
+  char inode_buffer[SECTOR_SIZE];
+  if(Disk_Read(inode_sector, inode_buffer) < 0) { osErrno = E_GENERAL; return -1; }
+    dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+
+  //get inode
+   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
+    int offset = inode-inode_start_entry;
+    assert(0 <= offset && offset < INODES_PER_SECTOR);
+    inode_t* fileInode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+    dprintf("... inode %d (size=%d, type=%d)\n",
+            inode, fileInode->size, fileInode->type);
+
+   //write data from after the last occupied data pointer
+   int i = 0;
+   for(i = file.pos; i < size; i++){
+      if(Disk_Write(fileInode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0) {
+          dprintf("... failed to write buffer data\n");
+          osErrno = E_GENERAL;
+          return -1;
+      }
+   /***TODO: need to check if write cannot complete due to lack of space on disk. how?***/	  
+   }
+
+   //set new read/write position   
+   File_Seek(fd, i);   
+
+  return size;
 }
 
 int File_Seek(int fd, int offset)
 {
-  /* YOUR CODE */
-  return 0;
+  //check if fd is valid index
+  if(fd < 0 || fd > MAX_OPEN_FILES){
+    dprintf("... fd=%d out of bound\n", fd);
+    osErrno = E_BAD_FD;
+    return -1;    
+  }
+  //check if open file
+ if(open_files[fd].inode <= 0) {
+    dprintf("... fd=%d not an open file\n", fd);
+    osErrno = E_BAD_FD;
+    return -1;
+  }
+    
+  //check if offset is within bounds
+  if(offset > open_files[fd].size || offset == -1){
+     dprintf("... offset=%d out of bound\n", fd);
+     osErrno = E_SEEK_OUT_OF_BOUNDS;
+    return -1; 
+  }
+
+  open_files[fd].pos = offset;
+
+  return open_files[fd].pos;  
 }
 
 int File_Close(int fd)
@@ -793,36 +938,36 @@ int Dir_Create(char* path)
 
 int Dir_Unlink(char* path)
 {
-    // no empty path and no root directory allowed
+     // no empty path and no root directory allowed
   if(path==NULL) {
     dprintf("... error: empty path (NULL) for directory unlink");
     osErrno = E_GENERAL;
     return -1;
   }
-
+ 
   if(strcmp(path, "/")==0) {
     dprintf("... error: not allowed to unlink root directory");
     osErrno = E_ROOT_DIR;
     return -1;
   }
-
+ 
   // find parent and children (if theres any)
-  int* child_inode;
+  int child_inode;
   int parent_inode = follow_path(path, &child_inode, NULL);
   if(parent_inode < 0) {
     dprintf("... error: directory '%s' not found\n", path);
       osErrno = E_NO_SUCH_DIR;
       return -1;
   }
-
+ 
   int remove = remove_inode(1, parent_inode, child_inode);
-
+ 
   if (remove==-1) {
-    dprintf("... error: general error when unlinking directory");
+    dprintf("... error: general error when unlinking directory\n");
     osErrno = E_GENERAL;
     return -1;
   } else if (remove==-3) {
-    dprintf("... error: no directory, wrong type");
+    dprintf("... error: no directory, wrong type\n");
     osErrno = E_NO_SUCH_DIR;
     return -1;
   } else if (remove==-2) {
@@ -831,7 +976,8 @@ int Dir_Unlink(char* path)
     return -1;
   } else {
     return 0;
-  }	
+  }
+
 
 }
 
