@@ -8,7 +8,7 @@
 #include "LibFS.h"
 
 // set to 1 to have detailed debug print-outs and 0 to have none
-#define FSDEBUG 0
+#define FSDEBUG 1
 
 #if FSDEBUG
 #define dprintf printf
@@ -117,46 +117,315 @@ static int check_magic()
   else return 0;
 }
 
+#define CHARBITS (8) //number of bits in a char
+ 
+/*
+    The following functions were created by ehenl001@fiu to for bit manipulation
+*/
+static void set_bit(char *bitmap, int index)
+{
+    ( bitmap[(index/CHARBITS)] |= (1UL << (index % CHARBITS)));
+}
+ 
+static void clear_bit(char *bitmap, int index)
+{
+    ( bitmap[(index/CHARBITS)] &= ~(1UL << (index % CHARBITS)));
+}
+ 
+static int test_bit(char *bitmap, int index)
+{
+    return ( bitmap[(index/CHARBITS)] & (1UL << (index % CHARBITS))) > 0;
+}
+ 
+static int array_size(int numBits)
+{
+    return (numBits/CHARBITS+(!!(numBits%CHARBITS)));
+}
+ 
 // initialize a bitmap with 'num' sectors starting from 'start'
 // sector; all bits should be set to zero except that the first
 // 'nbits' number of bits are set to one
 static void bitmap_init(int start, int num, int nbits)
 {
   /* YOUR CODE */
+  //create bitmap with size of arry of chars neccessary to support num bits
+  char *bitmap;
+  //get size of bit array in bytes
+  int size = array_size(num);
+  //allocate the neccessary bytes for the num size bitmap
+  bitmap = (char *)calloc(size, sizeof(char));
+ 
+  //initialize all bits to 0 (clear all bits)
+  for (int i = 0; i < num; i++)
+  {
+    clear_bit(bitmap,i);
+  }
+ 
+  //for nbits set the bit (bit = 1)
+   for (int i = 0; i < nbits; i++)
+  {
+    set_bit(bitmap,i);
+  }
+  //print all bits for testing
+  /*
+  for (int i = 0; i < num; i++)
+  {
+    printf("%d: %lu\n",i, test_bit(bitmap,i));
+  }
+ */
+ // check if bitmap will fit in one sector (SECTOR_SIZE > size(bitmap))
+ if(SECTOR_SIZE >= size)
+ {
+     //printf("SECTOR_SIZE >= size -> %d > %lu", SECTOR_SIZE, size);
+     if(Disk_Write(start, bitmap)<0)
+          {
+            dprintf("Error initializing bitmap");
+          }
+     
+ }
+ else
+ {
+     //printf("size > SECTOR_SIZE -> %lu > %d", size, SECTOR_SIZE );
+     char buff[SECTOR_SIZE];
+     int toXfr = size;//track total bytes to write to disk
+     int numBytes = 0;
+ 
+     for (int i = 0; i<= size; i+=SECTOR_SIZE)
+      {
+        if(toXfr>SECTOR_SIZE)
+        {
+            numBytes = SECTOR_SIZE;
+        }
+        else
+        {
+            numBytes = toXfr;
+        }
+        memcpy(buff, &bitmap[i], numBytes);//copy to buff numBytes of bitmap
+        if(Disk_Write(start++, buff)<0)
+          {
+            dprintf("Error initializing bitmap");
+          }
+        toXfr = toXfr - numBytes;//update number of bytes remaining to write to disk
+       
+        //for testing
+        /*
+        for(int y = 0; y < numBytes; y++)
+        {
+            printf("%d",buff[y]);
+        }    
+       
+        printf("\n");
+        printf("Copied %d bytes, %d remaining\n", numBytes, toXfr);
+        */
+      }  
+ }
+  free(bitmap);
 }
-
+ 
 // set the first unused bit from a bitmap of 'nbits' bits (flip the
 // first zero appeared in the bitmap to one) and return its location;
 // return -1 if the bitmap is already full (no more zeros)
 static int bitmap_first_unused(int start, int num, int nbits)
 {
   /* YOUR CODE */
-  return -1;
+ 
+  char buff[SECTOR_SIZE];
+ 
+  //determine number of sectors the bitmap occupies
+  int secRemain = (nbits / CHARBITS)%SECTOR_SIZE;
+  int numSec = (nbits / CHARBITS)/SECTOR_SIZE;
+  int found = 0;
+  int firstUnused = -1;
+  if(secRemain)
+  {
+      numSec += 1;
+  }
+ 
+  //determine number of bytes needed to represent bitmap with nbits
+  int bmpARRLen = array_size(nbits);  
+  int currSec = start;
+ 
+  //prep bitmap array
+  char *bitmap;
+  bitmap = (char*)calloc(bmpARRLen, sizeof(char));
+  int index = 0; //track index in bmp where next chunk from buff will be stored
+  int numBytes = bmpARRLen; //track remaining bytes to be copied to form complete bitmap
+  int bytesToCopy = -1;
+ 
+  for(int i = 0; i < numSec; i++)
+  {
+      //read each sector and build full bitmap
+      if(Disk_Read(currSec, buff) < 0) return -1;
+      //copy buff to bitmap
+      index = SECTOR_SIZE * i;
+      if(numBytes<=SECTOR_SIZE)
+      {
+          bytesToCopy = numBytes;
+      }
+      else
+      {
+          bytesToCopy = SECTOR_SIZE;
+          numBytes -= SECTOR_SIZE;
+      }
+      memcpy(&bitmap[index], buff, bytesToCopy);
+  }
+ 
+  //search for first bit equal to 0
+  for(int i =0; i < nbits; i++)
+  {
+      //if equal to 0 set bit and return i
+      if (test_bit(bitmap, i) == 0)
+      {
+          //set ith bit to 1
+          set_bit(bitmap, i);
+          found = 1;
+          firstUnused = i;
+      }
+      if(found) break;
+  }
+ 
+  //write new bit map to disk
+  numBytes = bmpARRLen;
+  currSec = start;
+  index = 0;
+  for(int i = 0; i < numSec; i++)
+  {
+      //check if remaining bytes to be copied (numBytes) is less than sector size
+      if(numBytes <= SECTOR_SIZE)
+      {
+          bytesToCopy = numBytes;
+      }
+      else
+      {
+          bytesToCopy = SECTOR_SIZE;
+      }
+      //copy from bitmap to buff
+      memcpy(buff, &bitmap[index], bytesToCopy);
+      //write to currSec full bitmap or part of full bitmap
+      if(Disk_Write(currSec, buff) < 0) return -1;
+      //update index, beginning of next section of bitmap to copy
+      index = SECTOR_SIZE * i;
+      //update remaining number of bytes needing to be written to disk
+      numBytes -= bytesToCopy;
+  }
+  //free allocated memory of bitmap
+  free(bitmap);
+ 
+  //if unused is found return its index, else return -1
+  if(found)
+  {
+      return firstUnused;
+  }
+  else
+  {
+      return -1;
+  }
 }
-
+ 
 // reset the i-th bit of a bitmap with 'num' sectors starting from
 // 'start' sector; return 0 if successful, -1 otherwise
 static int bitmap_reset(int start, int num, int ibit)
 {
   /* YOUR CODE */
-  return -1;
+  char buff[SECTOR_SIZE];
+ //determine bitmap length
+ int bmpARRLen = -1;
+ 
+ //check if num of bits is a multiple of 8, if there is a remainder then the neccessary length
+ //of an array to hold num bits is 1 + (number of bits / bits in a char = 8) otherwise its just (number of bits / bits in a char = 8)
+ bmpARRLen = array_size(num);
+ 
+ //initialize bitmap arrary with length equal to bmpARRLen
+ char *bitmap;
+ 
+ //allocate the neccessary bytes for the num size bitmap
+ bitmap = (char *)calloc(bmpARRLen, sizeof(char));
+ 
+ //determine number of sectors the bitmap occupies
+ int numSec = 1 +  (num / CHARBITS)/SECTOR_SIZE;
+ 
+ //check if bitmap only occupies one sector
+ if(numSec == 1)
+ {
+     //bitmap only ooccupies one sector, read the bitmap from start sector
+     if(Disk_Read(start, buff) < 0) return -1;
+     
+     //copy from buffer to bitmap
+     memcpy(bitmap, buff, bmpARRLen);
+     
+ }
+ else
+ {
+     for(int i = 0; i < numSec; i++)
+     {
+         int secRd = start + i;
+         //read from sector
+         if(Disk_Read(secRd, buff) < 0) return -1;
+         //copy to bitmap
+         int index = i * SECTOR_SIZE;
+         
+         memcpy(&bitmap[index], buff, SECTOR_SIZE);
+     }
+  }
+ 
+  if(test_bit(bitmap, ibit) == 0)
+  {
+      return -1;
+  }
+  else
+  {
+      clear_bit(bitmap, ibit);
+  }
+  //bytes to transfer from bitmap to buffer then write to disk
+  int toXfr = bmpARRLen;
+  //track num bytes to write to disk for each write to disk
+    int numBytes = -1;
+  //write bitmap to memory
+  for (int i = 0; i<= num; i+=SECTOR_SIZE)
+      {
+        if(toXfr>SECTOR_SIZE)//num bytes to write larger than sector size
+        {
+            numBytes = SECTOR_SIZE;
+        }
+        else
+        {
+            numBytes = toXfr;
+        }
+        memcpy(buff, &bitmap[i], numBytes);//copy to buff numBytes of bitmap
+        if(Disk_Write(start++, buff)<0)
+          {
+            dprintf("Error writing bitmap to disk");
+            return -1;
+          }
+        toXfr = toXfr - numBytes;//update number of bytes remaining to write to disk
+       
+      }  
+   
+ 
+  return 0;
 }
-
 // return 1 if the file name is illegal; otherwise, return 0; legal
 // characters for a file name include letters (case sensitive),
 // numbers, dots, dashes, and underscores; and a legal file name
 // should not be more than MAX_NAME-1 in length
 static int illegal_filename(char* name)
 {
-  // Check if name is non empty or too long
-  if(name==NULL || strlen(name)==0 || strlen(name)>=MAX_NAME-1){ return 1; }
-  
+   // Check if name is non empty or too long
+  if(name==NULL || strlen(name)==0 || strlen(name)>=MAX_NAME)
+  {
+    dprintf("... Filename is null or too long: %s\n", name);     
+    return 1;
+  }
+ 
   // Check if entries only contain allowed elements
   for(int i=0; i < strlen(name);i++){
-  	if(!(isalpha(name[i]) || isdigit(name[i]) || 
-  		name[i] == '.' || name[i] == '_' || name[i] == '-' )){ return 1; }
+    if(!(isalpha(name[i]) || isdigit(name[i]) ||
+        name[i] == '.' || name[i] == '_' || name[i] == '-'  || name[i] == '/'))
+        {
+          dprintf("... Invalid characters in filename: %s\n", name);
+          return 1; }
   }
-
+ 
   return 0;  
 }
 
@@ -646,6 +915,7 @@ int FS_Boot(char* backstore_fname)
 
 int FS_Sync()
 {
+  dprintf("FS_Sync():\n");
   if(Disk_Save(bs_filename) < 0) {
     // if can't write to file, something's wrong with the backstore
     dprintf("FS_Sync():\n... failed to save disk to file '%s'\n", bs_filename);
@@ -664,8 +934,10 @@ int File_Create(char* file)
   return create_file_or_directory(0, file);
 }
 
+//TODO: check if really remove the data blocks 
 int File_Unlink(char* file)
 {
+  dprintf("File_Unlink('%s'):\n", file);
   int child_inode;
   
   int parent_inode = follow_path(file, &child_inode, NULL);
@@ -680,6 +952,7 @@ int File_Unlink(char* file)
        return -1;
     }
     
+    
    int remove = remove_inode(0, parent_inode, child_inode);
    if(remove == -1){
       dprintf("... error: general error when unlinking file\n");
@@ -692,7 +965,7 @@ int File_Unlink(char* file)
       return -1;
    }
    else{
-   	return 0;
+   	   return 0;
    }
   
   }
@@ -742,6 +1015,10 @@ int File_Open(char* file)
     open_files[fd].inode = child_inode;
     open_files[fd].size = child->size;
     open_files[fd].pos = 0;
+
+
+        
+
     return fd;
   } else {
     dprintf("... file '%s' is not found\n", file);
@@ -750,8 +1027,10 @@ int File_Open(char* file)
   }  
 }
 
+//TODO: fix reading size in forloop
 int File_Read(int fd, void* buffer, int size)
 {
+    dprintf("File_Read(%d, buffer, %d):\n", fd, size);
     //check if fd is valid index
     if(fd < 0 || fd > MAX_OPEN_FILES){
 	dprintf("... fd=%d out of bound", fd);    
@@ -828,6 +1107,7 @@ int File_Read(int fd, void* buffer, int size)
 
 int File_Write(int fd, void* buffer, int size)
 {
+  dprintf("File_Write(%d, buffer, %d):\n",fd, size);
   //check if fd is valid index
     if(fd < 0 || fd > MAX_OPEN_FILES){
         dprintf("... fd=%d out of bound", fd);
@@ -843,13 +1123,19 @@ int File_Write(int fd, void* buffer, int size)
         osErrno = E_BAD_FD;
         return -1;
     }
+    
+    int extraSectorsNeeded = (size/SECTOR_SIZE + size%SECTOR_SIZE);
 
     //check if extra data doesn't go over max sectors per file
-    if(file.pos + size > MAX_SECTORS_PER_FILE){
-	dprintf("... fd=%d cannot add %d data sectors. No more space\n", fd, size);
+    if(file.pos + extraSectorsNeeded > MAX_SECTORS_PER_FILE){
+	dprintf("... fd=%d at position=%d cannot add %d data sectors. No more space\n", 
+						fd, file.pos, size);
 	osErrno = E_FILE_TOO_BIG;
+        return -1;
     }
-  
+    
+   dprintf("... extra sectors needed=%d for fd=%d at position=%d\n", extraSectorsNeeded,
+									fd, file.pos);
    //load file's inode disk sectors
   int inode = file.inode;
   int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
@@ -864,10 +1150,17 @@ int File_Write(int fd, void* buffer, int size)
     inode_t* fileInode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
     dprintf("... inode %d (size=%d, type=%d)\n",
             inode, fileInode->size, fileInode->type);
-
+   
+   
    //write data from after the last occupied data pointer
    int i = 0;
-   for(i = file.pos; i < size; i++){
+   for(i = file.pos; i < extraSectorsNeeded; i++){
+   	  if(fileInode->data[i] == 0){ //find first sector to use
+   	  	int newsec = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
+   		fileInode->data[i] = newsec;
+   		dprintf("Data[%d]=%d\n", i, fileInode->data[i]);
+   	  }
+
       if(Disk_Write(fileInode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0) {
           dprintf("... failed to write buffer data\n");
           osErrno = E_GENERAL;
@@ -877,13 +1170,18 @@ int File_Write(int fd, void* buffer, int size)
    }
 
    //set new read/write position   
-   File_Seek(fd, i);   
+   open_files[fd].pos = i;   
+
+   //update file size
+   int currSize = file.size;
+   open_files[fd].size = currSize + extraSectorsNeeded;
 
   return size;
 }
 
 int File_Seek(int fd, int offset)
 {
+  dprintf("File_Seek(%d, %d):\n", fd, offset);
   //check if fd is valid index
   if(fd < 0 || fd > MAX_OPEN_FILES){
     dprintf("... fd=%d out of bound\n", fd);
@@ -938,6 +1236,7 @@ int Dir_Create(char* path)
 
 int Dir_Unlink(char* path)
 {
+   dprintf("Dir_Unlink('%s'):\n", path);
      // no empty path and no root directory allowed
   if(path==NULL) {
     dprintf("... error: empty path (NULL) for directory unlink");
@@ -983,6 +1282,7 @@ int Dir_Unlink(char* path)
 
 int Dir_Size(char* path)
 {
+  dprintf("Dir_Size('%s'):\n", path);
   // no empty path allowed
   if(path==NULL) {
     dprintf("... error: empty path (NULL) given as parameter\n");
@@ -1023,6 +1323,7 @@ int Dir_Size(char* path)
 
 int Dir_Read(char* path, void* buffer, int size)
 {
+  dprintf("Dir_Read('%s', buffer, %d):\n", path, size);
   int real_size = Dir_Size(path);
   if(real_size<0) return -1;
   if(real_size==0) return 0;
