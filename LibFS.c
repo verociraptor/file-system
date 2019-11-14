@@ -145,13 +145,22 @@ static int array_size(int numBits)
 // initialize a bitmap with 'num' sectors starting from 'start'
 // sector; all bits should be set to zero except that the first
 // 'nbits' number of bits are set to one
-static void bitmap_init(int start, int num, int nbits)
+// type for inode bitmap sector = 0
+// type for sector bitmap sector = 1
+static void bitmap_init(int start, int num, int nbits, int type)
 {
   /* YOUR CODE */
+  dprintf("... start bitmap initialization with start=%d, num=%d, nbits=%d\n",start, num, nbits);
   //create bitmap with size of arry of chars neccessary to support num bits
   char *bitmap;
   //get size of bit array in bytes
-  int size = array_size(num);
+  //if type then bitmap sector, else inode sector
+  int size = -1;
+  if(type){
+     size = array_size(SECTOR_BITMAP_SIZE * CHARBITS);
+  }else{
+     size = array_size(INODE_BITMAP_SIZE * CHARBITS);
+  }
   //allocate the neccessary bytes for the num size bitmap
   bitmap = (char *)calloc(size, sizeof(char));
  
@@ -179,8 +188,11 @@ static void bitmap_init(int start, int num, int nbits)
      //printf("SECTOR_SIZE >= size -> %d > %lu", SECTOR_SIZE, size);
      if(Disk_Write(start, bitmap)<0)
           {
-            dprintf("Error initializing bitmap");
+            dprintf("Error initializing bitmap, func=bitmap_init\n");
           }
+      else{
+        dprintf("... bitmap wrote to disk successfully using 1 sector to store, func=bitmap_init\n");
+      }
      
  }
  else
@@ -189,8 +201,10 @@ static void bitmap_init(int start, int num, int nbits)
      char buff[SECTOR_SIZE];
      int toXfr = size;//track total bytes to write to disk
      int numBytes = 0;
+     int i = -1;
+     int numSectorUsed = 0;
  
-     for (int i = 0; i<= size; i+=SECTOR_SIZE)
+     for (i = 0; i<= size; i+=SECTOR_SIZE)
       {
         if(toXfr>SECTOR_SIZE)
         {
@@ -205,6 +219,7 @@ static void bitmap_init(int start, int num, int nbits)
           {
             dprintf("Error initializing bitmap");
           }
+         numSectorUsed +=1;
         toXfr = toXfr - numBytes;//update number of bytes remaining to write to disk
        
         //for testing
@@ -217,9 +232,11 @@ static void bitmap_init(int start, int num, int nbits)
         printf("\n");
         printf("Copied %d bytes, %d remaining\n", numBytes, toXfr);
         */
-      }  
+      }
+        dprintf("... bitmap written to disk using %d sectors to store on disk, func=bitmap_init\n", numSectorUsed);
  }
   free(bitmap);
+  dprintf("... mem freed for bitmap, func=bitmap_init\n");
 }
  
 // set the first unused bit from a bitmap of 'nbits' bits (flip the
@@ -228,6 +245,8 @@ static void bitmap_init(int start, int num, int nbits)
 static int bitmap_first_unused(int start, int num, int nbits)
 {
   /* YOUR CODE */
+ 
+  dprintf("... bitmap_first_unused called\n");
  
   char buff[SECTOR_SIZE];
  
@@ -255,7 +274,11 @@ static int bitmap_first_unused(int start, int num, int nbits)
   for(int i = 0; i < numSec; i++)
   {
       //read each sector and build full bitmap
-      if(Disk_Read(currSec, buff) < 0) return -1;
+      if(Disk_Read(currSec, buff) < 0)
+      {
+          dprintf("... could not retrieve bitmap from disk in func bitmap_first_unused\n");
+          return -1;
+      }
       //copy buff to bitmap
       index = SECTOR_SIZE * i;
       if(numBytes<=SECTOR_SIZE)
@@ -281,7 +304,10 @@ static int bitmap_first_unused(int start, int num, int nbits)
           found = 1;
           firstUnused = i;
       }
-      if(found) break;
+      if(found){
+          dprintf("... found unused bit in bitmap at index %d, func=bitmap_first_unused\n", firstUnused);
+          break;
+      }
   }
  
   //write new bit map to disk
@@ -318,6 +344,7 @@ static int bitmap_first_unused(int start, int num, int nbits)
   }
   else
   {
+      dprintf("...no unused bits in bitmap, func=bitmap_first_unused\n");
       return -1;
   }
 }
@@ -326,6 +353,7 @@ static int bitmap_first_unused(int start, int num, int nbits)
 // 'start' sector; return 0 if successful, -1 otherwise
 static int bitmap_reset(int start, int num, int ibit)
 {
+    dprintf("... called bitmap_reset\n");
   /* YOUR CODE */
   char buff[SECTOR_SIZE];
  //determine bitmap length
@@ -333,7 +361,7 @@ static int bitmap_reset(int start, int num, int ibit)
  
  //check if num of bits is a multiple of 8, if there is a remainder then the neccessary length
  //of an array to hold num bits is 1 + (number of bits / bits in a char = 8) otherwise its just (number of bits / bits in a char = 8)
- bmpARRLen = array_size(num);
+ bmpARRLen = num*SECTOR_SIZE;
  
  //initialize bitmap arrary with length equal to bmpARRLen
  char *bitmap;
@@ -342,13 +370,15 @@ static int bitmap_reset(int start, int num, int ibit)
  bitmap = (char *)calloc(bmpARRLen, sizeof(char));
  
  //determine number of sectors the bitmap occupies
- int numSec = 1 +  (num / CHARBITS)/SECTOR_SIZE;
+ int numSec = num;
  
  //check if bitmap only occupies one sector
  if(numSec == 1)
  {
      //bitmap only ooccupies one sector, read the bitmap from start sector
-     if(Disk_Read(start, buff) < 0) return -1;
+     if(Disk_Read(start, buff) < 0) {
+       dprintf("...cannot read bitmap from disk, func=bitmap_reset\n");
+           return -1;}
      
      //copy from buffer to bitmap
      memcpy(bitmap, buff, bmpARRLen);
@@ -360,7 +390,9 @@ static int bitmap_reset(int start, int num, int ibit)
      {
          int secRd = start + i;
          //read from sector
-         if(Disk_Read(secRd, buff) < 0) return -1;
+         if(Disk_Read(secRd, buff) < 0) {
+             dprintf("...cannot read bitmap from disk, func=bitmap_reset\n");
+             return -1;}
          //copy to bitmap
          int index = i * SECTOR_SIZE;
          
@@ -370,11 +402,13 @@ static int bitmap_reset(int start, int num, int ibit)
  
   if(test_bit(bitmap, ibit) == 0)
   {
+      dprintf("...error cannot clear bit in %d index, func=bitmap_reset\n", ibit);
       return -1;
   }
   else
   {
       clear_bit(bitmap, ibit);
+      dprintf("...bit in %d index cleared successfully, func=bitmap_reset\n", ibit);
   }
   //bytes to transfer from bitmap to buffer then write to disk
   int toXfr = bmpARRLen;
@@ -394,7 +428,7 @@ static int bitmap_reset(int start, int num, int ibit)
         memcpy(buff, &bitmap[i], numBytes);//copy to buff numBytes of bitmap
         if(Disk_Write(start++, buff)<0)
           {
-            dprintf("Error writing bitmap to disk");
+            dprintf("...writing bitmap to disk, func=bitmap_reset\n");
             return -1;
           }
         toXfr = toXfr - numBytes;//update number of bytes remaining to write to disk
@@ -698,6 +732,12 @@ int remove_inode(int type, int parent_inode, int child_inode)
     return -2;
   }
  
+  // delete the child inode
+  memset(child, 0, sizeof(inode_t));
+  if(Disk_Write(inode_sector, inode_buffer) < 0) return -1;
+  dprintf("... delete inode %d, update disk sector %d\n",
+    child_inode, inode_sector);
+ 
   // get the disk sector containing the parent inode
   inode_sector = INODE_TABLE_START_SECTOR+parent_inode/INODES_PER_SECTOR;
   if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
@@ -730,30 +770,85 @@ int remove_inode(int type, int parent_inode, int child_inode)
     return -1;
   }
  
-  // check for remaining dirents from parent in that sector (otherwise reset sector bitmap)
   int remainder = parent->size % DIRENTS_PER_SECTOR;
-  int group = parent->size/DIRENTS_PER_SECTOR;
+  int group = (parent->size+DIRENTS_PER_SECTOR-1)/DIRENTS_PER_SECTOR;
+  char dirent_buffer[SECTOR_SIZE];
+  dirent_t* dirent;
+  int counter = 0;
+  int found = 0;
+ 
+  // search for the dirent in every group
+  for(int i = 0; i<group; i++){
+   
+    if(Disk_Read(parent->data[i], dirent_buffer) < 0) return -1;
+      dprintf("... search for child in disk sector %d for dirent group %d\n", parent->data[i], i);
+ 
+    for(int j=0; j<DIRENTS_PER_SECTOR; j++){
+      counter ++;
+      dirent = (dirent_t*)(dirent_buffer+j*sizeof(dirent_t));
+ 
+      if(counter < parent->size && (!found)) {
+ 
+        // Case 1: Child node found and last dirent in the same sector
+        if(dirent->inode == child_inode && i == group-1) {
+          dirent_t* last_dirent = (dirent_t*)(dirent_buffer+(remainder-1)*sizeof(dirent_t));
+          memcpy(dirent, last_dirent, sizeof(dirent_t));
+          memset(last_dirent, 0, sizeof(dirent_t));
+          if(Disk_Write(parent->data[i], dirent_buffer) < 0) return -1;
+          dprintf("... delete dirent (inode=%d) from group %d, update disk sector %d\n",
+          child_inode, i, parent->data[i]);
+          found=1;
+ 
+        // Case 2: Child node found, but last dirent in other sector
+        } else if(dirent->inode == child_inode) {
+            char last_dirent_buffer[SECTOR_SIZE];
+            if(Disk_Read(parent->data[group-1], last_dirent_buffer) < 0) return -1;
+            dprintf("... load last dirent from parent %d in disk sector %d for dirent group %d\n",
+            parent_inode, parent->data[group-1], group-1);
+            dirent_t* last_dirent = (dirent_t*)(last_dirent_buffer+(remainder-1)*sizeof(dirent_t));
+            memcpy(dirent, last_dirent, sizeof(dirent_t));
+            memset(last_dirent, 0, sizeof(dirent_t));
+            if(Disk_Write(parent->data[i], dirent_buffer) < 0) return -1;
+            dprintf("...delete dirent (inode=%d) from group %d, update disk sector %d\n",
+              child_inode, i, parent->data[i]);
+            if(Disk_Write(parent->data[group-1], last_dirent_buffer) < 0) return -1;
+            dprintf("...copy last dirent with inode %d into group %d, update disk sector %d\n",
+              dirent->inode, group-1, parent->data[group-1]);
+            found=1;
+        }
+ 
+      } else if(!found) {
+ 
+        // Case 3: Child found and last dirent from parent
+        if(dirent->inode == child_inode) {
+          memset(dirent, 0, sizeof(dirent_t));
+          if(Disk_Write(parent->data[i], dirent_buffer) < 0) return -1;
+          dprintf("... delete dirent (inode=%d) from group %d, update disk sector %d\n",
+          child_inode, group-1, parent->data[i]);
+          found=1;
+ 
+        // Case 4: Child node not found, and reached last dirent from parent
+        } else if(counter >= parent->size) {
+          dprintf("Counter: %d, Parent size: %d\n", counter, parent->size);
+          dprintf("... error: child inode could not be found in parent directory\n");
+          return -1;
+        }
+      }
+    }
+  }
+ 
+  // delete inode in inode sector
+ 
+ 
+  // check for remaining dirents from parent in that sector (otherwise reset sector bitmap)
   if (remainder == 1) {
     // disk sector has to be freed
     if (bitmap_reset(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, parent->data[group]) < 0) {
     dprintf("... error: free sector in bitmap unsuccessful\n");
     return -1;
     }
-    parent->data[group] = 0;
+    parent->data[group-1] = 0;
   }
- 
-  // delete the dirent and write to disk
-  char dirent_buffer[SECTOR_SIZE];
-  if(Disk_Read(parent->data[group], dirent_buffer) < 0) return -1;
-    dprintf("... load disk sector %d for dirent group %d\n", parent->data[group], group);
-  int start_entry = group*DIRENTS_PER_SECTOR;
-  offset = (parent->size-1)-start_entry;
-  dirent_t* dirent = (dirent_t*)(dirent_buffer+offset*sizeof(dirent_t));
-  memset(dirent->fname, 0, sizeof(dirent->fname));
-  dirent->inode = -1;
-  if(Disk_Write(parent->data[group], dirent_buffer) < 0) return -1;
-  dprintf("... delete dirent %d (inode=%d) from group %d, update disk sector %d\n",
-    parent->size, child_inode, group, parent->data[group]);
  
   // update parent inode and write to disk
   parent->size--;
@@ -761,7 +856,7 @@ int remove_inode(int type, int parent_inode, int child_inode)
   dprintf("... update parent inode on disk sector %d\n", inode_sector);
  
   return 0;
-
+ 
 }
 
 // representing an open file
@@ -831,14 +926,20 @@ int FS_Boot(char* backstore_fname)
       dprintf("... formatted superblock (sector %d)\n", SUPERBLOCK_START_SECTOR);
 
       // format inode bitmap (reserve the first inode to root)
-      bitmap_init(INODE_BITMAP_START_SECTOR, INODE_BITMAP_SECTORS, 1);
+      //type for inode bitmap sector = 0
+       dprintf("... calling  bitmap int for inode bitmap with start=%d, num=%d, nbits=1\n", 
+                    INODE_BITMAP_START_SECTOR, INODE_BITMAP_SECTORS);
+      bitmap_init(INODE_BITMAP_START_SECTOR, INODE_BITMAP_SECTORS, 1, 0);
       dprintf("... formatted inode bitmap (start=%d, num=%d)\n",
 	     (int)INODE_BITMAP_START_SECTOR, (int)INODE_BITMAP_SECTORS);
       
       // format sector bitmap (reserve the first few sectors to
       // superblock, inode bitmap, sector bitmap, and inode table)
+      //type for sector bitmap = 1
+      dprintf("... calling  bitmap int for sector bitmap with start=%d, num=%d, nbits=%ld\n", 
+                SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, DATABLOCK_START_SECTOR);
       bitmap_init(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS,
-		  DATABLOCK_START_SECTOR);
+		  DATABLOCK_START_SECTOR, 1);
       dprintf("... formatted sector bitmap (start=%d, num=%d)\n",
 	     (int)SECTOR_BITMAP_START_SECTOR, (int)SECTOR_BITMAP_SECTORS);
       
@@ -1028,6 +1129,7 @@ int File_Open(char* file)
 }
 
 //TODO: fix reading size in forloop
+//TODO: check if correctly determining size 
 int File_Read(int fd, void* buffer, int size)
 {
     dprintf("File_Read(%d, buffer, %d):\n", fd, size);
@@ -1046,26 +1148,29 @@ int File_Read(int fd, void* buffer, int size)
         osErrno = E_BAD_FD;
         return -1;
     }
-  int position = file.pos;  
-  int remReadSize = 0;
 
+    int sectorsToRead = (size/SECTOR_SIZE + size%SECTOR_SIZE);
+
+    int remReadSize = 0;
   //check if file size is empty
   if(file.size == 0)
   {
-	//none to read  
+	//none to read
+  dprintf("... file fd=%d is empty\n", fd);  
 	return 0;
   }
 
-  //determine how many bytes to read
-  if(file.size - position == 0)
+  //determine how many sectors can actually be read
+  if(file.size - file.pos == 0)
   {
-      //none to read		  
-      return 0;
+    //none to read. position at end of file 
+    dprintf("... file fd=%d is at end of file\n", fd);	  
+    return 0;
   }
   else{
       //if less than size is remaining, read only remaining
-      //else pick size
-      remReadSize = min(file.size - position, size);
+      //else pick initial given size to read
+      remReadSize = min(file.size - file.pos, sectorsToRead);
   	
   }
   memset(buffer, 0, remReadSize);
@@ -1088,55 +1193,61 @@ int File_Read(int fd, void* buffer, int size)
     dprintf("... inode %d (size=%d, type=%d)\n",
 	    inode, fileInode->size, fileInode->type);
     
-    //FILES_PER_SECTOR (SECTOR_SIZE/SIZEOF(open_file_t))
-   int i = 0;
+   int position = file.pos;
    //read data from given datablock pointers
-   for(i = file.pos; i < remReadSize; i++){
-     if(Disk_Read(fileInode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0){
-        dprintf("... error: cant read sector %d\n", fileInode->data[i]);
+   for(int i = 0; i < remReadSize; i++){
+     if(Disk_Read(fileInode->data[position], (char*)buffer+position*SECTOR_SIZE) < 0){
+        dprintf("... error: cant read sector %d\n", fileInode->data[position]);
         osErrno=E_GENERAL;
         return -1;	     
      }
+     dprintf("... Reading data[%d]=%d\n", position, fileInode->data[position]);
+     position++;
    }
 
-   File_Seek(fd, i);
 
-  
+   //set new read/write position   
+   open_files[fd].pos = position;   
+
+  dprintf("... file=%d is now at pos=%d\n", fd, open_files[fd].pos);
+  dprintf("... successfully read %d sectors\n", remReadSize);
   return remReadSize;
+
 }
 
 int File_Write(int fd, void* buffer, int size)
 {
   dprintf("File_Write(%d, buffer, %d):\n",fd, size);
   //check if fd is valid index
-    if(fd < 0 || fd > MAX_OPEN_FILES){
-        dprintf("... fd=%d out of bound", fd);
-        osErrno = E_BAD_FD;
-        return -1;
-    }
+  if(fd < 0 || fd > MAX_OPEN_FILES){
+    dprintf("... error: fd=%d out of bound", fd);
+    osErrno = E_BAD_FD;
+    return -1;
+  }
 
-    open_file_t file = open_files[fd];
+  open_file_t file = open_files[fd];
 
-    //check if not an open file
-    if(file.inode <= 0){
-        dprintf("... fd=%d not an open file\n", fd);
-        osErrno = E_BAD_FD;
-        return -1;
-    }
+  //check if not an open file
+  if(file.inode <= 0){
+    dprintf("... error: fd=%d not an open file\n", fd);
+    osErrno = E_BAD_FD;
+    return -1;
+  }
     
-    int extraSectorsNeeded = (size/SECTOR_SIZE + size%SECTOR_SIZE);
+  int sectorsToWrite = (size/SECTOR_SIZE + size%SECTOR_SIZE);
 
-    //check if extra data doesn't go over max sectors per file
-    if(file.pos + extraSectorsNeeded > MAX_SECTORS_PER_FILE){
-	dprintf("... fd=%d at position=%d cannot add %d data sectors. No more space\n", 
-						fd, file.pos, size);
-	osErrno = E_FILE_TOO_BIG;
-        return -1;
-    }
+  //check if extra data doesn't go over max sectors per file
+  if(file.pos + sectorsToWrite > MAX_SECTORS_PER_FILE){
+	  dprintf("... error: fd=%d at position=%d cannot add %d data sectors. No more space\n", 
+	                           				fd, file.pos, size);
+	  osErrno = E_FILE_TOO_BIG;
+    return -1;
+  }
     
-   dprintf("... extra sectors needed=%d for fd=%d at position=%d\n", extraSectorsNeeded,
+  dprintf("... extra sectors needed=%d for fd=%d at position=%d\n", sectorsToWrite,
 									fd, file.pos);
-   //load file's inode disk sectors
+
+  //load file's inode disk sectors
   int inode = file.inode;
   int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
   char inode_buffer[SECTOR_SIZE];
@@ -1144,38 +1255,55 @@ int File_Write(int fd, void* buffer, int size)
     dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
 
   //get inode
-   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
-    int offset = inode-inode_start_entry;
-    assert(0 <= offset && offset < INODES_PER_SECTOR);
-    inode_t* fileInode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
-    dprintf("... inode %d (size=%d, type=%d)\n",
+  int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
+  int offset = inode-inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t* fileInode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+  dprintf("... inode %d (size=%d, type=%d)\n",
             inode, fileInode->size, fileInode->type);
    
+  
+  //write data from after the last occupied data pointer
+  int position = file.pos;
+  for(int i = 0; i < sectorsToWrite; i++){
+    //find first sector to use
+   	int newsec = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
+
+    //check if space exists on disk for write
+    if(newsec < 0){
+      dprintf("... error: no space on disk, write cannot complete\n");
+      osErrno = E_NO_SPACE;
+      return -1;
+    }
+
+   	fileInode->data[position] = newsec;
+   	
+    if(Disk_Write(fileInode->data[position], (char*)buffer+position*SECTOR_SIZE) < 0) {
+      dprintf("... error: failed to write buffer data\n");
+      osErrno = E_GENERAL;
+      return -1;
+    }
+    dprintf("... Writing data[%d]=%d\n", position, fileInode->data[position]);
+    position++;
+  } 
+
+  //update file and inode size
+  int currSize = file.size;
+  open_files[fd].size = currSize + sectorsToWrite;
+
+  fileInode->size = open_files[fd].size;
+
+  //write to disk the updated inode
+  if(Disk_Write(inode_sector, inode_buffer) < 0) return -1;
+  dprintf("... update child inode %d (size=%d, type=%d), update disk sector %d\n",
+                  inode, fileInode->size, fileInode->type, inode_sector);
+
+  //set new read/write position   
+  open_files[fd].pos = position;   
+
+ dprintf("... file=%d is now at pos=%d with size=%d\n", 
+              fd, open_files[fd].pos, open_files[fd].size);
    
-   //write data from after the last occupied data pointer
-   int i = 0;
-   for(i = file.pos; i < extraSectorsNeeded; i++){
-   	  if(fileInode->data[i] == 0){ //find first sector to use
-   	  	int newsec = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
-   		fileInode->data[i] = newsec;
-   		dprintf("Data[%d]=%d\n", i, fileInode->data[i]);
-   	  }
-
-      if(Disk_Write(fileInode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0) {
-          dprintf("... failed to write buffer data\n");
-          osErrno = E_GENERAL;
-          return -1;
-      }
-   /***TODO: need to check if write cannot complete due to lack of space on disk. how?***/	  
-   }
-
-   //set new read/write position   
-   open_files[fd].pos = i;   
-
-   //update file size
-   int currSize = file.size;
-   open_files[fd].size = currSize + extraSectorsNeeded;
-
   return size;
 }
 
@@ -1184,20 +1312,20 @@ int File_Seek(int fd, int offset)
   dprintf("File_Seek(%d, %d):\n", fd, offset);
   //check if fd is valid index
   if(fd < 0 || fd > MAX_OPEN_FILES){
-    dprintf("... fd=%d out of bound\n", fd);
+    dprintf("... error: fd=%d out of bound\n", fd);
     osErrno = E_BAD_FD;
     return -1;    
   }
   //check if open file
  if(open_files[fd].inode <= 0) {
-    dprintf("... fd=%d not an open file\n", fd);
+    dprintf("... error: fd=%d not an open file\n", fd);
     osErrno = E_BAD_FD;
     return -1;
   }
     
   //check if offset is within bounds
   if(offset > open_files[fd].size || offset == -1){
-     dprintf("... offset=%d out of bound\n", fd);
+     dprintf("... error: offset=%d out of bound\n", fd);
      osErrno = E_SEEK_OUT_OF_BOUNDS;
     return -1; 
   }
@@ -1211,12 +1339,12 @@ int File_Close(int fd)
 {
   dprintf("File_Close(%d):\n", fd);
   if(0 > fd || fd > MAX_OPEN_FILES) {
-    dprintf("... fd=%d out of bound\n", fd);
+    dprintf("... error: fd=%d out of bound\n", fd);
     osErrno = E_BAD_FD;
     return -1;
   }
   if(open_files[fd].inode <= 0) {
-    dprintf("... fd=%d not an open file\n", fd);
+    dprintf("... error: fd=%d not an open file\n", fd);
     osErrno = E_BAD_FD;
     return -1;
   }
@@ -1362,7 +1490,7 @@ int Dir_Read(char* path, void* buffer, int size)
   // a) completely filled sectors
   for(int i=0; i<group;i++) {
     if(Disk_Read(dir_inode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0) {
-        dprintf("... error: cant read sector %d\n", dir_inode->data[i]);
+        dprintf("... error: can't read sector %d\n", dir_inode->data[i]);
         osErrno=E_GENERAL;
         return -1;
     }
@@ -1371,7 +1499,7 @@ int Dir_Read(char* path, void* buffer, int size)
   // b) partly filled sector
   if(remainder) {
       if(Disk_Read(dir_inode->data[group], inode_buffer) < 0){
-        dprintf("... error: cant read sector %d\n", dir_inode->data[group]);
+        dprintf("... error: can't read sector %d\n", dir_inode->data[group]);
             osErrno=E_GENERAL;
             return -1;
       }

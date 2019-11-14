@@ -11,53 +11,126 @@ void usage(char *prog)
 
 int main(int argc, char *argv[])
 {
-  char *diskfile, *path;
-  if(argc != 2 && argc != 3) usage(argv[0]);
-  if(argc == 3) { diskfile = argv[1]; path = argv[2]; }
-  else { diskfile = "default-disk"; path = argv[1]; }
+  if (argc != 2) usage(argv[0]);
 
-  if(FS_Boot(diskfile) < 0) {
-    printf("ERROR: can't boot file system from file '%s'\n", diskfile);
+  if(FS_Boot(argv[1]) < 0) {
+    printf("ERROR: can't boot file system from file '%s'\n", argv[1]);
     return -1;
+  } else printf("file system booted from file '%s'\n", argv[1]);
+
+  
+   char* fn1;
+   char* fn2;
+
+  //Create first file
+  fn1 = "/first-file";
+  if(File_Create(fn1) < 0) printf("ERROR: can't create file '%s'\n", fn1);
+  else printf("file '%s' created successfully\n", fn1);
+
+  //Create second file
+  fn2 = "/second-file";
+  if(File_Create(fn2) < 0) printf("ERROR: can't create file '%s'\n", fn2);
+  else printf("file '%s' created successfully\n", fn2);
+
+  //Open second file
+  int fd2 = File_Open(fn2);
+  if(fd2 < 0) printf("ERROR: can't open file '%s'\n", fn2);
+  else printf("file '%s' opened successfully, fd=%d\n", fn2, fd2);
+
+  //Open first file
+  int fd1 = File_Open(fn1);
+  if(fd1 < 0) printf("ERROR: can't open file '%s'\n", fn1);
+  else printf("file '%s' opened successfully, fd=%d\n", fn1, fd1);
+
+  char buf1[1024]; char* ptr1 = buf1;
+  for(int i=0; i<1000; i++) {
+    sprintf(ptr1, "%d %s", i, (i+1)%10==0 ? "\n" : "");
+    ptr1 += strlen(ptr1);
+    if(ptr1 >= buf1+1000) break;
+  }
+
+  //Write second file
+  if(File_Write(fd2, buf1, 1024) != 1024)
+    printf("ERROR: can't write 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
+  else printf("successfully wrote 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
+
+  //Close second file
+  if(File_Close(fd2) < 0)
+    printf("ERROR: cannot close fd=%d for file='%s'\n", fd2, fn2);
+  else printf("successfully closed fd=%d for file='%s'\n", fd2, fn2);
+
+  char buf2[1024]; char* ptr2 = buf2;
+  for(int i=0; i<1000; i++) {
+    sprintf(ptr2, "%d %s", i, (i+1)%10==0 ? "\n" : "");
+    ptr2 += strlen(ptr2);
+    if(ptr2 >= buf2+1000) break;
   }
   
-  fn = "/first-file";
-  if(File_Create(fn) < 0) printf("ERROR: can't create file '%s'\n", fn);
-  else printf("file '%s' created successfully\n", fn);
+  //Write first file
+  if(File_Write(fd1, buf2, 1024) != 1024)
+    printf("ERROR: can't write 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
+  else printf("successfully wrote 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
 
-  fn = "/second-file";
-  if(File_Create(fn) < 0) printf("ERROR: can't create file '%s'\n", fn);
-  else printf("file '%s' created successfully\n", fn);
-
-  fn = "/second-file";
-  int fd = File_Open(fn);
-  if(fd < 0) printf("ERROR: can't open file '%s'\n", fn);
-  else printf("file '%s' opened successfully, fd=%d\n", fn, fd);
-
-  char buf[1024]; char* ptr = buf;
-  for(int i=0; i<1000; i++) {
-    sprintf(ptr, "%d %s", i, (i+1)%10==0 ? "\n" : "");
-    ptr += strlen(ptr);
-    if(ptr >= buf+1000) break;
-  }
-  if(File_Write(fd, buf, 1024) != 1024)
-    printf("ERROR: can't write 1024 bytes to fd=%d\n", fd);
-  else printf("successfully wrote 1024 bytes to fd=%d\n", fd);
-
+  //Read second file
   char buffer[1024];
-  if(File_Read(fd, buffer, 1024) != 1024)
-    printf("ERROR: can't read 1024 bytes to fd=%d\n", fd);
-  else printf("successfully read 1024 bytes to fd=%d\n", fd);
+  if(File_Read(fd2, buffer, 1024) < 0)
+    printf("ERROR: can't read 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
+  else printf("successfully read 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
 
-  if(File_Unlink(path) < 0) {
-    printf("ERROR: can't remove file '%s'\n", path);
-    return -2;
+  //Write first file
+  char buf3[1024]; char* ptr3 = buf3;
+  for(int i=0; i<1000; i++) {
+    sprintf(ptr3, "%d %s", i, (i+1)%10==0 ? "\n" : "");
+    ptr3 += strlen(ptr3);
+    if(ptr3 >= buf3+1000) break;
   }
-  printf("file '%s' removed successfully\n", path);
+  
+  //Write first file
+  if(File_Write(fd1, buf3, 1024) != 1024)
+    printf("ERROR: can't write 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
+  else printf("successfully wrote 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
+
+
+  //Close first file
+  if(File_Close(fd1) < 0)
+    printf("ERROR: cannot close fd=%d for file='%s'\n", fd1, fn1);
+  else printf("successfully closed fd=%d for file='%s'\n", fd1, fn1);
+
+  //Open first file
+  fd1 = File_Open(fn1);
+  if(fd1 < 0) printf("ERROR: can't open file '%s'\n", fn1);
+  else printf("file '%s' opened successfully, fd=%d\n", fn1, fd1);
+
+  //Read first file
+  char buffer2[1024];
+  if(File_Read(fd1, buffer2, 1024) < 0)
+    printf("ERROR: can't read 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
+  else printf("successfully read 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
+
+
+//Unlink first file
+ if(File_Unlink(fn1) < 0) {
+    printf("ERROR: can't remove file '%s'\n", fn1);
+  }
+  else printf("file '%s' removed successfully\n", fn1);
+
+//Close first file
+if(File_Close(fd1) < 0)
+    printf("ERROR: cannot close fd=%d for file='%s'\n", fd1, fn1);
+  else printf("successfully closed fd=%d for file='%s'\n", fd1, fn1);
+
+
+//Unlink second file
+ if(File_Unlink(fn2) < 0) {
+    printf("ERROR: can't remove file '%s'\n", fn2);
+  }
+  else printf("file '%s' removed successfully\n", fn2);
+
 
   if(FS_Sync() < 0) {
-    printf("ERROR: can't sync disk '%s'\n", diskfile);
+    printf("ERROR: can't sync disk '%s'\n", argv[1]);
     return -3;
-  }
+  }else printf("file system sync'd to file '%s'\n", argv[1]);
+
   return 0;
 }
