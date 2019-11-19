@@ -49,6 +49,8 @@ int main(int argc, char *argv[])
     if(ptr1 >= buf1+1000) break;
   }
 
+  printf("%s\n", buf1);
+
   //Write second file
   if(File_Write(fd2, buf1, 1024) != 1024)
     printf("ERROR: can't write 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
@@ -77,6 +79,7 @@ int main(int argc, char *argv[])
     printf("ERROR: can't read 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
   else printf("successfully read 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
 
+
   //Write first file
   char buf3[1024]; char* ptr3 = buf3;
   for(int i=0; i<1000; i++) {
@@ -84,6 +87,8 @@ int main(int argc, char *argv[])
     ptr3 += strlen(ptr3);
     if(ptr3 >= buf3+1000) break;
   }
+
+  printf("Buffer to write into fd=%d:\n%s\n", fd1, buf3);
   
   //Write first file
   if(File_Write(fd1, buf3, 1024) != 1024)
@@ -107,6 +112,7 @@ int main(int argc, char *argv[])
     printf("ERROR: can't read 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
   else printf("successfully read 1024 bytes to fd=%d for file='%s'\n", fd1, fn1);
 
+  printf("Buffer to write into fd=%d:\n%s\n", fd1, buffer2);
 
 //Unlink first file
  if(File_Unlink(fn1) < 0) {
