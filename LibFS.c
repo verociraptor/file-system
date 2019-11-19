@@ -150,7 +150,7 @@ static int array_size(int numBits)
 static void bitmap_init(int start, int num, int nbits, int type)
 {
   /* YOUR CODE */
-  dprintf("... start bitmap initialization with start=%d, num=%d, nbits=%d\n",start, num, nbits);
+  dprintf("...start bitmap initialization with start=%d, num=%d, nbits=%d\n",start, num, nbits);
   //create bitmap with size of arry of chars neccessary to support num bits
   char *bitmap;
   //get size of bit array in bytes
@@ -175,6 +175,10 @@ static void bitmap_init(int start, int num, int nbits, int type)
   {
     set_bit(bitmap,i);
   }
+ 
+  //set the bits of the sector that thec current bitmap occupies
+  for(int i = start; i < start + num; i++) set_bit(bitmap, i);
+ 
   //print all bits for testing
   /*
   for (int i = 0; i < num; i++)
@@ -191,8 +195,9 @@ static void bitmap_init(int start, int num, int nbits, int type)
             dprintf("Error initializing bitmap, func=bitmap_init\n");
           }
       else{
-        dprintf("... bitmap wrote to disk successfully using 1 sector to store, func=bitmap_init\n");
+        dprintf("...bitmap wrote to disk successfully using 1 sector to store, func=bitmap_init\n");
       }
+     
      
  }
  else
@@ -233,7 +238,7 @@ static void bitmap_init(int start, int num, int nbits, int type)
         printf("Copied %d bytes, %d remaining\n", numBytes, toXfr);
         */
       }
-        dprintf("... bitmap written to disk using %d sectors to store on disk, func=bitmap_init\n", numSectorUsed);
+        dprintf("...bitmap written to disk using %d sectors to store on disk, func=bitmap_init\n", numSectorUsed);
  }
   free(bitmap);
   dprintf("... mem freed for bitmap, func=bitmap_init\n");
@@ -246,7 +251,7 @@ static int bitmap_first_unused(int start, int num, int nbits)
 {
   /* YOUR CODE */
  
-  dprintf("... bitmap_first_unused called\n");
+  dprintf("...bitmap_first_unused called\n");
  
   char buff[SECTOR_SIZE];
  
@@ -276,7 +281,7 @@ static int bitmap_first_unused(int start, int num, int nbits)
       //read each sector and build full bitmap
       if(Disk_Read(currSec, buff) < 0)
       {
-          dprintf("... could not retrieve bitmap from disk in func bitmap_first_unused\n");
+          dprintf("...could not retrieve bitmap from disk in func bitmap_first_unused\n");
           return -1;
       }
       //copy buff to bitmap
@@ -305,7 +310,7 @@ static int bitmap_first_unused(int start, int num, int nbits)
           firstUnused = i;
       }
       if(found){
-          dprintf("... found unused bit in bitmap at index %d, func=bitmap_first_unused\n", firstUnused);
+          dprintf("...found unused bit in bitmap at index %d, func=bitmap_first_unused", firstUnused);
           break;
       }
   }
@@ -1082,7 +1087,9 @@ int File_Unlink(char* file)
 int File_Open(char* file)
 {
   dprintf("File_Open('%s'):\n", file);
+
   int fd = new_file_fd();
+
   if(fd < 0) {
     dprintf("... max open files reached\n");
     osErrno = E_TOO_MANY_OPEN_FILES;
@@ -1091,7 +1098,14 @@ int File_Open(char* file)
 
   int child_inode;
   follow_path(file, &child_inode, NULL);
-  if(child_inode >= 0) { // child is the one
+
+  if(child_inode >= 0) { // child is the one, file exists
+    //check if file is already open
+    if(is_file_open(child_inode)){
+      dprintf("... error: %s is an open file already.\n", file);
+      osErrno = E_FILE_IN_USE;
+      return -1;
+    }
     // load the disk sector containing the inode
     int inode_sector = INODE_TABLE_START_SECTOR+child_inode/INODES_PER_SECTOR;
     char inode_buffer[SECTOR_SIZE];
@@ -1128,16 +1142,14 @@ int File_Open(char* file)
   }  
 }
 
-//TODO: fix reading size in forloop
-//TODO: check if correctly determining size 
 int File_Read(int fd, void* buffer, int size)
 {
     dprintf("File_Read(%d, buffer, %d):\n", fd, size);
     //check if fd is valid index
     if(fd < 0 || fd > MAX_OPEN_FILES){
-	dprintf("... fd=%d out of bound", fd);    
+	    dprintf("... fd=%d out of bound", fd);    
     	osErrno = E_BAD_FD;
-	return -1;
+	    return -1;
     }
 
     open_file_t file = open_files[fd];
@@ -1215,12 +1227,36 @@ int File_Read(int fd, void* buffer, int size)
 
 }
 
+//helper function
+//gets user input on what action to take related to overwriting a file
+//when the file recently opens and is non-empty
+int toOverwriteOrNot(int fd){
+  int action = 0;
+  do{
+    printf("File of fd=%d is non-empty. Do you\n"
+          "1. wish to overwrite from starting position?\n"
+          "2. wish to append data from first empty position?\n"
+          "3. wish to not overwrite?\n"
+          "Please input 1, 2 or 3 indicating your desired action.\n", fd);
+    
+    scanf("%d", &action);
+  }while(action != 1 && action != 2 && action != 3);
+
+  return action;
+}
+
+//case 1: file_write first called on empty file -> no checks, write into file
+//case 2: file_write first called on a recently opened non-empty file 
+//        -> check if user wishes to overwrite
+//        if 1 -> overwrite from given position
+//        if 2 -> write only from the first empty position
+//        if 3 -> do not overwrite
 int File_Write(int fd, void* buffer, int size)
 {
   dprintf("File_Write(%d, buffer, %d):\n",fd, size);
   //check if fd is valid index
   if(fd < 0 || fd > MAX_OPEN_FILES){
-    dprintf("... error: fd=%d out of bound", fd);
+    dprintf("... error: fd=%d out of bound\n", fd);
     osErrno = E_BAD_FD;
     return -1;
   }
@@ -1262,10 +1298,36 @@ int File_Write(int fd, void* buffer, int size)
   dprintf("... inode %d (size=%d, type=%d)\n",
             inode, fileInode->size, fileInode->type);
    
+  int action = 0;
+  //check if recently opened file is non-empty
+  if(fileInode->size > 0 && file.pos == 0){
+    //check if user wishes to overwrite
+    action = toOverwriteOrNot(fd);
+    if(action == 3){
+      printf("User wishes to not overwrite already existing file.\n");
+      return 0;
+    }
+
+  }
   
-  //write data from after the last occupied data pointer
+  //write data from after the given data pointer
   int position = file.pos;
   for(int i = 0; i < sectorsToWrite; i++){
+    //want to overwrite file
+    if(action == 1){
+      // disk sector has to be freed
+      if (bitmap_reset(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, fileInode->data[position]) < 0) {
+        dprintf("... error: free sector in bitmap unsuccessful\n");
+        return -1;
+      }
+    }
+    else if(action == 2){ //write only from the first empty position
+      while(fileInode->data[position] != 0){
+        position++;
+      }
+    }
+    //else if action == 0, proceed with given position
+
     //find first sector to use
    	int newsec = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
 
@@ -1452,30 +1514,44 @@ int Dir_Size(char* path)
 int Dir_Read(char* path, void* buffer, int size)
 {
   dprintf("Dir_Read('%s', buffer, %d):\n", path, size);
-  int real_size = Dir_Size(path);
-  if(real_size<0) return -1;
-  if(real_size==0) return 0;
+ 
+  // no empty path allowed
+  if(path==NULL) {
+    dprintf("... error: empty path (NULL) given as parameter\n");
+    osErrno = E_GENERAL;
+    return -1;
+  }
+ 
+  // directory has to exist
+  int inode;
+  int parent_inode = follow_path(path, &inode, NULL);
+  if(parent_inode < 0) {
+    dprintf("... error: directory '%s' not found\n", path);
+      osErrno = E_NO_SUCH_DIR;
+      return -1;
+  }
+ 
+  int act_size = (int)malloc_usable_size(buffer);
  
   // check if size of buffer is large enough to hold all elements in the directory
-  if (size<real_size) {
+  if (size>act_size) {
+    dprintf("... error: buffer provided has size %d, but %d bytes required\n",
+      act_size, size);
     osErrno=E_BUFFER_TOO_SMALL;
     return -1;
   }
  
   // initialize buffer
-  memset(buffer, 0, size);
+  bzero(buffer, size);
  
   // load disk sector from directory
-  int inode;
   char inode_buffer[SECTOR_SIZE];
-  int parent_inode=follow_path(path, &inode, NULL);
-  if(parent_inode<0) return -1;
   int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
   if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... load inode table for parent inode %d from disk sector %d\n",
      inode, inode_sector);
  
-  // get the parent inode
+  // get the directory inode
   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
   int offset = inode-inode_start_entry;
   assert(0 <= offset && offset < INODES_PER_SECTOR);
@@ -1486,11 +1562,12 @@ int Dir_Read(char* path, void* buffer, int size)
   // read the directory entries into the buffer
   int remainder=dir_inode->size%DIRENTS_PER_SECTOR;
   int group=dir_inode->size/DIRENTS_PER_SECTOR;
+  int buf_offset = (int)(SECTOR_SIZE-SECTOR_SIZE%sizeof(dirent_t));
  
   // a) completely filled sectors
   for(int i=0; i<group;i++) {
-    if(Disk_Read(dir_inode->data[i], (char*)buffer+i*SECTOR_SIZE) < 0) {
-        dprintf("... error: can't read sector %d\n", dir_inode->data[i]);
+    if(Disk_Read(dir_inode->data[i], buffer+i*buf_offset) < 0) {
+        dprintf("... error: cant read sector %d\n", dir_inode->data[i]);
         osErrno=E_GENERAL;
         return -1;
     }
@@ -1498,15 +1575,26 @@ int Dir_Read(char* path, void* buffer, int size)
  
   // b) partly filled sector
   if(remainder) {
-      if(Disk_Read(dir_inode->data[group], inode_buffer) < 0){
-        dprintf("... error: can't read sector %d\n", dir_inode->data[group]);
+      char buff[SECTOR_SIZE];
+      if(Disk_Read(dir_inode->data[group], buff) < 0){
+        dprintf("... error: cant read sector %d\n", dir_inode->data[group]);
             osErrno=E_GENERAL;
             return -1;
       }
-      strncpy((char*)buffer+group*SECTOR_SIZE, inode_buffer, remainder*sizeof(dirent_t));
+ 
+    memcpy(buffer+group*buf_offset, buff, remainder*sizeof(dirent_t));
+   
   }
+ 
+  /*
+  int bytes = Dir_Size(path);
+  printf("Number Entries: %d\n", dir_inode->size);
+  printf("Dirents per sector: %d\n", (int)DIRENTS_PER_SECTOR);
+  printf("Size of dir in bytes: %d\n", bytes);
+  printf("Size of buffer in bytes: %d\n", act_size);
+  printf("Group: %d, Remainder: %d\n", group, remainder);
+  printf("Sector size: %d\n", (int)SECTOR_SIZE);*/
  
   return dir_inode->size;
 }
-
 
