@@ -1292,13 +1292,13 @@ int File_Read(int fd, void* buffer, int size)
   int sizeToRead = 0;
 
    /***ask user if to read initial amount or also the remaining***/
-
+  /*
   if(remFileSize > size && readRemaining(fd) == 2){
     sizeToRead = remFileSize;
   }
-  else{
+  else{*/
     sizeToRead = min(remFileSize,size);
-  }
+  
 
   //if less than size is remaining, read only remaining
   //else pick initial given size to read
@@ -1360,7 +1360,7 @@ int File_Read(int fd, void* buffer, int size)
 
   //temp buffer to read entire sector in
   char tempBuff[SECTOR_SIZE];
-  bzero(buffer,sizeToRead);
+  memset(buffer,0,sizeToRead);
 
   //will position buffer ptr to next available space to copy data into
   int ctrSize = 0;
@@ -1603,8 +1603,8 @@ int File_Write(int fd, void* buffer, int size)
   }
 
   blue();
-  dprintf("... extra sectors needed=%d for fd=%d at position=%d\n", sectorsToWrite,
-                  fd, position);
+  dprintf("... extra sectors needed=%d for fd=%d at data[%d] at byte position=%d\n", sectorsToWrite,
+                  fd, position, positionByte);
   reset();
 
   /***write into data blocks***/
@@ -1612,19 +1612,22 @@ int File_Write(int fd, void* buffer, int size)
   char tempBuff[SECTOR_SIZE];
   int ctrSize = 0;
   for(int i = 0; i < sectorsToWrite; i++){
-    //find first sector to use
-   	int newsec = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
-
-    //check if space exists on disk for write
-    if(newsec < 0){
-      blue();
-      dprintf("... error: no space on disk, write cannot complete\n");
-      reset();
-      osErrno = E_NO_SPACE;
-      return -1;
-    }
-
-   	fileInode->data[position] = newsec;
+    //find first sector to use if starting at new position
+    int newsec = 0;
+    if(positionByte == 0){
+   	  newsec = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
+      
+      //check if space exists on disk for write
+      if(newsec < 0){
+        blue();
+        dprintf("... error: no space on disk, write cannot complete\n");
+        reset();
+        osErrno = E_NO_SPACE;
+        return -1;
+      }
+      fileInode->data[position] = newsec;
+    } 
+   	
     bzero(tempBuff, SECTOR_SIZE);
     if(Disk_Read(fileInode->data[position], tempBuff) < 0){
       blue();
