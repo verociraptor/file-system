@@ -144,13 +144,13 @@ static int array_size(int numBits)
 }
 
 void yellow(){printf("\033[0;33m");};
-void boldYellow(){printf("\033[01;33m");};
+void boldYellow(){printf("\033[1m\033[33m");};
 void blue(){printf("\033[0;34m");};
-void boldBlue(){printf("\033[01;32m");};
+void boldBlue(){printf("\033[1m\033[34m");};
 void green(){printf("\033[0;32m");};
-void boldGreen(){printf("\033[01;32m");};
+void boldGreen(){printf("\033[1m\033[32m");};
 void red(){printf("\033[0;31m");}
-void boldRed(){printf("\033[01;31m");};
+void boldRed(){printf("\033[1m\033[31m");};
 void reset(){printf("\033[0m");};
 // initialize a bitmap with 'num' sectors starting from 'start'
 // sector; all bits should be set to zero except that the first
@@ -1239,29 +1239,38 @@ int readRemaining(int fd){
 //Case 3: Size to read is equal to actual size -> read the given size
 int File_Read(int fd, void* buffer, int size)
 {
-    dprintf("File_Read(%d, buffer, %d):\n", fd, size);
-    //check if fd is valid index
-    if(fd < 0 || fd > MAX_OPEN_FILES){
-	    dprintf("... fd=%d out of bound", fd);    
-    	osErrno = E_BAD_FD;
-	    return -1;
-    }
+  boldBlue();
+  dprintf("File_Read(%d, buffer, %d):\n", fd, size);
+  reset();
 
-    open_file_t file = open_files[fd];
+  //check if fd is valid index
+  if(fd < 0 || fd > MAX_OPEN_FILES){
+    blue();
+	  dprintf("... fd=%d out of bound", fd);  
+    reset();  
+  	osErrno = E_BAD_FD;
+	  return -1;
+  }
 
-    //check if not an open file
-    if(file.inode <= 0){
-      dprintf("... fd=%d not an open file\n", fd);
-      osErrno = E_BAD_FD;
-      return -1;
-    }
+  open_file_t file = open_files[fd];
+
+  //check if not an open file
+  if(file.inode <= 0){
+    blue();
+    dprintf("... fd=%d not an open file\n", fd);
+    reset();
+    osErrno = E_BAD_FD;
+    return -1;
+  }
 
     
   //check if file size is empty
   if(file.size == 0)
   {
   	//none to read
-    dprintf("... file fd=%d is empty\n", fd);  
+    blue();
+    dprintf("... file fd=%d is empty\n", fd); 
+    reset(); 
   	return 0;
   }
 
@@ -1270,7 +1279,9 @@ int File_Read(int fd, void* buffer, int size)
   //none to read, position at end of file
   if(file.size - ((file.pos+1)*SECTOR_SIZE-(SECTOR_SIZE-file.posByte)) == 0)
   {
-    dprintf("... file fd=%d is at end of file\n", fd);	  
+    blue();
+    dprintf("... file fd=%d is at end of file\n", fd);	
+    reset();  
     return 0;
   }
   //something to read
@@ -1315,9 +1326,10 @@ int File_Read(int fd, void* buffer, int size)
     }
   }
   	
-
+  blue();
   dprintf("... sectors to read=%d with size to read=%d of file size=%d at data[%d] at byte position=%d\n",
             sectorsToRead, sizeToRead, file.size, file.pos, file.posByte);
+  reset();
 
  /***get file inode***/
   
@@ -1326,15 +1338,21 @@ int File_Read(int fd, void* buffer, int size)
   int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
   char inode_buffer[SECTOR_SIZE];
   if(Disk_Read(inode_sector, inode_buffer) < 0) { osErrno = E_GENERAL; return -1; }
-    dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+  
+  blue();
+  dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+  reset();
 
   //get inode
   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
   int offset = inode-inode_start_entry;
   assert(0 <= offset && offset < INODES_PER_SECTOR);
   inode_t* fileInode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+
+  blue();
   dprintf("... inode %d (size=%d, type=%d)\n",
 	          inode, fileInode->size, fileInode->type);
+  reset();
     
   int position = file.pos;
 
@@ -1350,11 +1368,17 @@ int File_Read(int fd, void* buffer, int size)
     bzero(tempBuff, SECTOR_SIZE);
 
     if(Disk_Read(fileInode->data[position], tempBuff) < 0){
+      blue();
       dprintf("... error: can't read sector %d\n", fileInode->data[position]);
+      reset();
       osErrno=E_GENERAL;
       return -1;	     
     }
-    dprintf("... Reading data[%d]=%d\n", position, fileInode->data[position]);
+
+    blue();
+    dprintf("... Reading data[%d]=%d at positionByte=%d\n", 
+              position, fileInode->data[position], file.posByte);
+    reset();
 
     int currBytes = 0;  //keep track of what's currently read from sector
 
@@ -1368,14 +1392,18 @@ int File_Read(int fd, void* buffer, int size)
       currBytes = SECTOR_SIZE;
     }
     
+    blue();
+    dprintf("... Copying data of %d bytes at %d into buffer ptr at %d\n",
+                currBytes, file.posByte, ctrSize);
+    reset();
 
-    //copy what's needed into buffer form buff
+    //copy what's needed into buffer from buff
     memcpy(buffer+ctrSize, tempBuff+file.posByte, currBytes);
     
     ctrSize += currBytes;
 
     //specify new byte position if didn't read the entire last sector
-    if(i == sectorsToRead - 1 && currBytes < SECTOR_SIZE){
+    if(i == sectorsToRead - 1 && file.posByte + currBytes < SECTOR_SIZE){
       file.posByte = currBytes;
     }
     else{//new byte position and block position if read entire sectors
@@ -1391,8 +1419,11 @@ int File_Read(int fd, void* buffer, int size)
   open_files[fd].pos = position;
   open_files[fd].posByte = file.posByte;   
 
-  dprintf("... file=%d is now at pos=%d\n", fd, open_files[fd].pos);
-  dprintf("... successfully read %d sectors\n", remReadSize);
+  blue();
+  dprintf("... file=%d is now at pos=%d with byte pos=%d\n", fd, open_files[fd].pos, open_files[fd].posByte);
+  
+  dprintf("... successfully read %d sectors with size=%d\n", sectorsToRead, sizeToRead);
+  reset();
 
   return sizeToRead;
 
@@ -1424,11 +1455,15 @@ int toOverwriteOrNot(int fd){
 //        if 3 -> do not overwrite
 int File_Write(int fd, void* buffer, int size)
 {
+  boldBlue();
   dprintf("File_Write(%d, buffer, %d):\n",fd, size);
+  reset();
 
   //check if fd is valid index
   if(fd < 0 || fd > MAX_OPEN_FILES){
+    blue();
     dprintf("... error: fd=%d out of bound\n", fd);
+    reset();
     osErrno = E_BAD_FD;
     return -1;
   }
@@ -1437,7 +1472,9 @@ int File_Write(int fd, void* buffer, int size)
 
   //check if not an open file
   if(file.inode <= 0){
+    blue();
     dprintf("... error: fd=%d not an open file\n", fd);
+    reset();
     osErrno = E_BAD_FD;
     return -1;
   }
@@ -1445,9 +1482,11 @@ int File_Write(int fd, void* buffer, int size)
   //check if file size is full
   if(file.size == MAX_SECTORS_PER_FILE*SECTOR_SIZE)
   {
+    blue();
     dprintf("... error: file fd=%d is full\n", fd);  
+    reset();
     osErrno = E_FILE_TOO_BIG;
-    return -1;
+    return 0;
   }
 
   //load file's inode disk sectors
@@ -1455,15 +1494,20 @@ int File_Write(int fd, void* buffer, int size)
   int inode_sector = INODE_TABLE_START_SECTOR+inode/INODES_PER_SECTOR;
   char inode_buffer[SECTOR_SIZE];
   if(Disk_Read(inode_sector, inode_buffer) < 0) { osErrno = E_GENERAL; return -1; }
-    dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+
+  blue();
+  dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+  reset();
 
   //get inode
   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
   int offset = inode-inode_start_entry;
   assert(0 <= offset && offset < INODES_PER_SECTOR);
   inode_t* fileInode = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
+  blue();
   dprintf("... inode %d (size=%d, type=%d)\n",
             inode, fileInode->size, fileInode->type);
+  reset();
    
    /***check if user wishes to overwrite or not***/
 
@@ -1479,7 +1523,9 @@ int File_Write(int fd, void* buffer, int size)
     //check if user wishes to overwrite
     action = toOverwriteOrNot(fd);
     if(action == 3){
+      blue();
       printf("... User wishes to not overwrite already existing file. No write done\n");
+      reset();
       return 0;
     }
     else if(action == 2){ //write only from the first empty position
@@ -1489,9 +1535,10 @@ int File_Write(int fd, void* buffer, int size)
       if(file.size%SECTOR_SIZE){
         positionByte = file.size%SECTOR_SIZE;
       }
-
+      blue();
       dprintf("... User wishes to write from first empty byte position=%d in block position=%d with file size=%d\n",
               positionByte, position, file.size);
+      reset();
     }
     else{//wishes to overwrite. delete file contents
       int pos = 0;
@@ -1501,7 +1548,9 @@ int File_Write(int fd, void* buffer, int size)
         // disk sector has to be freed
         if(Disk_Write(fileInode->data[pos], dataBuffer) < 0) return -1;
         if (bitmap_reset(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, fileInode->data[pos]) < 0) {
+          blue();
           dprintf("... error: free sector occupied by file in sector bitmap unsuccessful\n");
+          reset();
           return -1;
         }
         pos++;
@@ -1510,17 +1559,22 @@ int File_Write(int fd, void* buffer, int size)
       positionByte = 0;
       file.size = 0;
       fileInode->size = 0;
+      blue();
       dprintf("... User wishes to overwrite entire file. Starting at block position=%d with file size=%d\n",
               position, file.size);
+      reset();
     }
   }
 
   //check if extra data doesn't go over max sectors per file
   if(file.size + size > MAX_SECTORS_PER_FILE*SECTOR_SIZE){
+    blue();
     dprintf("... error: fd=%d of size=%d at block position=%d at byte position=%d cannot add size=%d bytes." 
             "No space for that amount\n", fd, file.size, position, positionByte, size);
+    reset();
+
     osErrno = E_FILE_TOO_BIG;
-    return -1;
+    return 0;
   }
 
   /***determine how many sectors need to be written in***/
@@ -1548,9 +1602,13 @@ int File_Write(int fd, void* buffer, int size)
     }
   }
 
+  blue();
   dprintf("... extra sectors needed=%d for fd=%d at position=%d\n", sectorsToWrite,
                   fd, position);
-   
+  reset();
+
+  /***write into data blocks***/
+  
   char tempBuff[SECTOR_SIZE];
   int ctrSize = 0;
   for(int i = 0; i < sectorsToWrite; i++){
@@ -1559,7 +1617,9 @@ int File_Write(int fd, void* buffer, int size)
 
     //check if space exists on disk for write
     if(newsec < 0){
+      blue();
       dprintf("... error: no space on disk, write cannot complete\n");
+      reset();
       osErrno = E_NO_SPACE;
       return -1;
     }
@@ -1567,12 +1627,16 @@ int File_Write(int fd, void* buffer, int size)
    	fileInode->data[position] = newsec;
     bzero(tempBuff, SECTOR_SIZE);
     if(Disk_Read(fileInode->data[position], tempBuff) < 0){
+      blue();
       dprintf("... error: can't read sector %d\n", fileInode->data[position]);
+      reset();
       osErrno=E_GENERAL;
       return -1;       
     }
    	
+    blue();
     dprintf("... going to write into disk in sector %d\n", newsec);
+    reset();
 
     int currBytes = 0;  //keep track of what's currently needed to extract from buffer
 
@@ -1585,21 +1649,30 @@ int File_Write(int fd, void* buffer, int size)
     else{//full sectors
       currBytes = SECTOR_SIZE;
     }
-  
-    ctrSize += currBytes;//where to next extract from buffer
+    
+    blue();
+    dprintf("... copying data %d bytes from ptr position %d in buffer into tempbuff at position %d\n",
+            currBytes, ctrSize, positionByte);
+    reset();
 
     //copy what's needed from buffer into tempbuff
     memcpy(tempBuff+positionByte, buffer+ctrSize, currBytes);
 
+    ctrSize += currBytes;//where to next extract from buffer
+
     if(Disk_Write(fileInode->data[position], tempBuff) < 0) {
+      blue();
       dprintf("... error: failed to write buffer data\n");
+      reset();
       osErrno = E_GENERAL;
       return -1;
     }
+    blue();
     dprintf("... Writing data[%d]=%d\n", position, fileInode->data[position]);
+    reset();
 
     //specify new byte position if didn't read the entire last sector
-    if(i == sectorsToWrite - 1 && currBytes < SECTOR_SIZE){
+    if(i == sectorsToWrite - 1 && positionByte + currBytes < SECTOR_SIZE){
       positionByte = currBytes;
     }
     else{//new byte position and block position if read entire sectors
@@ -1607,6 +1680,8 @@ int File_Write(int fd, void* buffer, int size)
       positionByte = 0;
     }
   } 
+
+  /***update file and file inode***/
 
   //update file and inode size
   open_files[fd].size = file.size + size;
@@ -1619,12 +1694,13 @@ int File_Write(int fd, void* buffer, int size)
 
   //write to disk the updated inode
   if(Disk_Write(inode_sector, inode_buffer) < 0) return -1;
+  blue();
   dprintf("... update child inode %d (size=%d, type=%d), update disk sector %d\n",
                   inode, fileInode->size, fileInode->type, inode_sector); 
 
- dprintf("... file=%d is now at block pos=%d and byte position=%d with size=%d\n", 
+  dprintf("... file=%d is now at block pos=%d and byte position=%d with size=%d\n", 
               fd, open_files[fd].pos, open_files[fd].posByte, open_files[fd].size);
-   
+  reset();
   return size;
 }
 
