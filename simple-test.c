@@ -68,6 +68,8 @@ int main(int argc, char *argv[])
     if(ptr >= buf+1000) break;
   }
   
+  printf("Buffer:\n%s\n", buf);
+
   if(File_Write(fd, buf, 1024) != 1024)
     printf("ERROR: can't write 1024 bytes to fd=%d\n", fd);
   else printf("successfully wrote 1024 bytes to fd=%d\n", fd);

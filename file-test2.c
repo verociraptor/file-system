@@ -76,7 +76,6 @@ int main(int argc, char *argv[])
   int sz = Dir_Size(fn);
   printf("Directory size: %d\n", sz);
   char* buffer = malloc(sz);
-  
   int entries = Dir_Read(fn, buffer, sz);
   printf("directory '%s':\n     %-15s\t%-s\n", fn, "NAME", "INODE");
   int idx = 0;
@@ -90,7 +89,7 @@ int main(int argc, char *argv[])
   fn = "/file-1";
   fd = File_Open(fn);
   if(fd < 0) printf("ERROR: can't open file '%s'\n", fn);
-  else printf("file '%s' opened successfully, fd=%d\n", fn, fd);*/
+  else printf("file '%s' opened successfully, fd=%d\n", fn, fd);8*/
  
   printf("\nExpected output: SUCCESS\n");
   char buf[1024]; char* ptr = buf;
@@ -99,8 +98,6 @@ int main(int argc, char *argv[])
     ptr += strlen(ptr);
     if(ptr >= buf+1000) break;
   }
-  printf("Buffer has:\n%s\n", buf);
-
   if(File_Write(fd, buf, 1024) != 1024)
     printf("ERROR: can't write 1024 bytes to fd=%d\n", fd);
   else printf("successfully wrote 1024 bytes to fd=%d\n", fd);
@@ -108,6 +105,11 @@ int main(int argc, char *argv[])
   printf("\nExpected output: SUCCESS\n");
   if(File_Close(fd) < 0) printf("ERROR: can't close fd %d\n", fd);
   else printf("fd %d closed successfully\n", fd);
+ 
+  printf("\nExpected output: SUCCESS\n");
+  fn = "/file-1";
+  if(File_Unlink(fn) < 0) printf("ERROR: can't unlink file '%s'\n", fn);
+  else printf("file '%s' unlinked successfully\n", fn);
  
  
   if(FS_Sync() < 0) {

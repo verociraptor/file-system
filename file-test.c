@@ -22,21 +22,25 @@ int main(int argc, char *argv[])
    char* fn1;
    char* fn2;
 
+printf("\nExpected output: SUCCESS\n");
   //Create first file
   fn1 = "/first-file";
   if(File_Create(fn1) < 0) printf("ERROR: can't create file '%s'\n", fn1);
   else printf("file '%s' created successfully\n", fn1);
 
+printf("\nExpected output: SUCCESS\n");
   //Create second file
   fn2 = "/second-file";
   if(File_Create(fn2) < 0) printf("ERROR: can't create file '%s'\n", fn2);
   else printf("file '%s' created successfully\n", fn2);
 
+printf("\nExpected output: SUCCESS\n");
   //Open second file
   int fd2 = File_Open(fn2);
   if(fd2 < 0) printf("ERROR: can't open file '%s'\n", fn2);
   else printf("file '%s' opened successfully, fd=%d\n", fn2, fd2);
 
+printf("\nExpected output: SUCCESS\n");
   //Open first file
   int fd1 = File_Open(fn1);
   if(fd1 < 0) printf("ERROR: can't open file '%s'\n", fn1);
@@ -51,11 +55,13 @@ int main(int argc, char *argv[])
 
   printf("%s\n", buf1);
 
+printf("\nExpected output: SUCCESS\n");
   //Write second file
   if(File_Write(fd2, buf1, 1024) != 1024)
     printf("ERROR: can't write 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
   else printf("successfully wrote 1024 bytes to fd=%d for file='%s'\n", fd2, fn2);
 
+printf("\nExpected output: SUCCESS\n");
   //Close second file
   if(File_Close(fd2) < 0)
     printf("ERROR: cannot close fd=%d for file='%s'\n", fd2, fn2);
@@ -67,6 +73,7 @@ int main(int argc, char *argv[])
     ptr2 += strlen(ptr2);
     if(ptr2 >= buf2+1000) break;
   }
+  
   
   //Write first file
   if(File_Write(fd1, buf2, 1024) != 1024)

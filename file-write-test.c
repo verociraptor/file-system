@@ -29,15 +29,21 @@ int main(int argc, char *argv[])
     return -2;
   }
 
-  char buf[BFSZ+1]; int sz;
+  int sz;
+  char buf[BFSZ+1]; char* ptr = buf;
+  for(int i=0; i<BFSZ; i++) {
+    sprintf(ptr, "%d %s", i, (i+1)%10==0 ? "\n" : "");
+    ptr += strlen(ptr);
+    if(ptr >= buf+BFSZ) break;
+  }
+
+  printf("Buffer:\n%s\n", buf);
   do {
-    sz = File_Read(fd, buf, BFSZ);
+    sz = File_Write(fd, buf, BFSZ);
     if(sz < 0) {
-      printf("ERROR: can't read file '%s'\n", path);
+      printf("ERROR: can't write file '%s'\n", path);
       return -3;
     }
-    buf[sz] = '\0';
-    printf("%s\n", buf);
   } while(sz > 0);
   
   File_Close(fd);
