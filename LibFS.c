@@ -633,6 +633,7 @@ static int follow_path(char* path, int* last_inode, char* last_fname)
   }
 }
 
+
 // add a new file or directory (determined by 'type') of given name
 // 'file' under parent directory represented by 'parent_inode'
 int add_inode(int type, int parent_inode, char* file)
@@ -641,53 +642,62 @@ int add_inode(int type, int parent_inode, char* file)
   int child_inode = bitmap_first_unused(INODE_BITMAP_START_SECTOR, INODE_BITMAP_SECTORS, INODE_BITMAP_SIZE);
   if(child_inode < 0) {
     dprintf("... error: inode table is full\n");
-    return -1; 
+    return -1;
   }
   dprintf("... new child inode %d\n", child_inode);
-
+ 
   // load the disk sector containing the child inode
   int inode_sector = INODE_TABLE_START_SECTOR+child_inode/INODES_PER_SECTOR;
   char inode_buffer[SECTOR_SIZE];
   if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... load inode table for child inode from disk sector %d\n", inode_sector);
-
+ 
   // get the child inode
   int inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
   int offset = child_inode-inode_start_entry;
   assert(0 <= offset && offset < INODES_PER_SECTOR);
   inode_t* child = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
-
+ 
   // update the new child inode and write to disk
   memset(child, 0, sizeof(inode_t));
   child->type = type;
   if(Disk_Write(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... update child inode %d (size=%d, type=%d), update disk sector %d\n",
-	 child_inode, child->size, child->type, inode_sector);
-
+     child_inode, child->size, child->type, inode_sector);
+ 
   // get the disk sector containing the parent inode
   inode_sector = INODE_TABLE_START_SECTOR+parent_inode/INODES_PER_SECTOR;
   if(Disk_Read(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... load inode table for parent inode %d from disk sector %d\n",
-	 parent_inode, inode_sector);
-
+     parent_inode, inode_sector);
+ 
   // get the parent inode
   inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR)*INODES_PER_SECTOR;
   offset = parent_inode-inode_start_entry;
   assert(0 <= offset && offset < INODES_PER_SECTOR);
   inode_t* parent = (inode_t*)(inode_buffer+offset*sizeof(inode_t));
   dprintf("... get parent inode %d (size=%d, type=%d)\n",
-	 parent_inode, parent->size, parent->type);
-
+     parent_inode, parent->size, parent->type);
+ 
   // get the dirent sector
   if(parent->type != 1) {
     dprintf("... error: parent inode is not directory\n");
     return -2; // parent not directory
   }
   int group = parent->size/DIRENTS_PER_SECTOR;
+  //check if group has reach max sectors per directory and abort if true
+  if (group >= MAX_SECTORS_PER_FILE){
+    printf("... all sectors of parent director is filled\n");
+    return -1;
+  }
   char dirent_buffer[SECTOR_SIZE];
   if(group*DIRENTS_PER_SECTOR == parent->size) {
     // new disk sector is needed
     int newsec = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
+    if(group == MAX_SECTORS_PER_FILE-1){
+      dprintf(".... error: all sectors referenced in data attribute of parent inode fully occupied. Parent size: %d\n", parent->size);
+      return -1;
+    }
     if(newsec < 0) {
       dprintf("... error: disk is full\n");
       return -1;
@@ -700,7 +710,7 @@ int add_inode(int type, int parent_inode, char* file)
       return -1;
     dprintf("... load disk sector %d for dirent group %d\n", parent->data[group], group);
   }
-
+ 
   // add the dirent and write to disk
   int start_entry = group*DIRENTS_PER_SECTOR;
   offset = parent->size-start_entry;
@@ -709,13 +719,14 @@ int add_inode(int type, int parent_inode, char* file)
   dirent->inode = child_inode;
   if(Disk_Write(parent->data[group], dirent_buffer) < 0) return -1;
   dprintf("... append dirent %d (name='%s', inode=%d) to group %d, update disk sector %d\n",
-	  parent->size, dirent->fname, dirent->inode, group, parent->data[group]);
-
+      parent->size, dirent->fname, dirent->inode, group, parent->data[group]);
+ 
   // update parent inode and write to disk
   parent->size++;
+  dprintf("... updating parent inode size: %d", parent->size);
   if(Disk_Write(inode_sector, inode_buffer) < 0) return -1;
   dprintf("... update parent inode on disk sector %d\n", inode_sector);
-  
+ 
   return 0;
 }
 
@@ -1447,6 +1458,19 @@ int toOverwriteOrNot(int fd){
   return action;
 }
 
+int ifWriteRem(int fd, int size, int sizeRem){
+  int action = 0;
+
+  do{
+    printf("File of fd=%d cannot write requested size=%d bytes. It has a space of size=%d bytes remaining. Do you\n"
+            "1. wish to write %d bytes from data given?\n"
+            "2. wish to not write at all?\n"
+            "Please input 1 or 2 indicating your desired actions.\n", fd, size, sizeRem, sizeRem);
+    scanf("%d", &action);
+  }while(action != 1 && action != 2);
+
+  return action;
+}
 //case 1: file_write first called on empty file -> no checks, write into file
 //case 2: file_write first called on a recently opened non-empty file 
 //        -> check if user wishes to overwrite
@@ -1456,7 +1480,7 @@ int toOverwriteOrNot(int fd){
 int File_Write(int fd, void* buffer, int size)
 {
   boldBlue();
-  dprintf("File_Write(%d, buffer, %d):\n",fd, size);
+  printf("File_Write(%d, buffer, %d):\n",fd, size);
   reset();
 
   //check if fd is valid index
@@ -1566,15 +1590,26 @@ int File_Write(int fd, void* buffer, int size)
     }
   }
 
-  //check if extra data doesn't go over max sectors per file
-  if(file.size + size > MAX_SECTORS_PER_FILE*SECTOR_SIZE){
-    blue();
-    dprintf("... error: fd=%d of size=%d at block position=%d at byte position=%d cannot add size=%d bytes." 
-            "No space for that amount\n", fd, file.size, position, positionByte, size);
-    reset();
+  int sizeToWrite = size;
 
-    osErrno = E_FILE_TOO_BIG;
-    return 0;
+  //check if the rem space left is less than size to write
+  if(SECTOR_SIZE*MAX_SECTORS_PER_FILE - file.size < size){
+    blue();
+    dprintf("... error: fd=%d of size=%d at block position=%d at byte position=%d cannot add size=%d bytes.\n" 
+              "Ask user what they want to do\n", fd, file.size, position, positionByte, size, sizeToWrite);
+    reset();
+    if(ifWriteRem(fd) == 1){
+      sizeToWrite = SECTOR_SIZE*MAX_SECTORS_PER_FILE - file.size;
+      blue();
+      dprintf("... User chose to write only %d bytes to file=%d\n", sizeToWrite, fd);
+      reset();
+    }
+    else{
+      blue();
+      dprintf("... User chose to not write remaining %d bytes. Ending call\n", SECTOR_SIZE*MAX_SECTORS_PER_FILE - file.size);
+      osErrno = E_FILE_TOO_BIG;
+      return 0;
+    }
   }
 
   /***determine how many sectors need to be written in***/
@@ -1583,8 +1618,8 @@ int File_Write(int fd, void* buffer, int size)
 
   if(positionByte != 0){//if posByte is at part of current sector
     sectorsToWrite++;
-    if(SECTOR_SIZE - positionByte < size){//need to write more sectors
-      int remSize = size - (SECTOR_SIZE - positionByte);
+    if(SECTOR_SIZE - positionByte < sizeToWrite){//need to write more sectors
+      int remSize = sizeToWrite - (SECTOR_SIZE - positionByte);
       sectorsToWrite += remSize/SECTOR_SIZE;
 
       //check for remainder
@@ -1594,10 +1629,10 @@ int File_Write(int fd, void* buffer, int size)
     }
   }
   else{//if posByte is at beginning of a sector
-    sectorsToWrite = size/SECTOR_SIZE;
+    sectorsToWrite = sizeToWrite/SECTOR_SIZE;
 
     //check remainder
-    if(size%SECTOR_SIZE){
+    if(sizeToWrite%SECTOR_SIZE){
       sectorsToWrite++;
     }
   }
@@ -1647,7 +1682,7 @@ int File_Write(int fd, void* buffer, int size)
       currBytes = SECTOR_SIZE - positionByte;
     }
     else if(i == sectorsToWrite - 1){//at last sector to write into 
-      currBytes = size - ctrSize;
+      currBytes = sizeToWrite - ctrSize;
     }   
     else{//full sectors
       currBytes = SECTOR_SIZE;
@@ -1687,7 +1722,7 @@ int File_Write(int fd, void* buffer, int size)
   /***update file and file inode***/
 
   //update file and inode size
-  open_files[fd].size = file.size + size;
+  open_files[fd].size = file.size + sizeToWrite;
   open_files[fd].pos = position;
   open_files[fd].posByte = positionByte;
 
@@ -1704,7 +1739,7 @@ int File_Write(int fd, void* buffer, int size)
   dprintf("... file=%d is now at block pos=%d and byte position=%d with size=%d\n", 
               fd, open_files[fd].pos, open_files[fd].posByte, open_files[fd].size);
   reset();
-  return size;
+  return sizeToWrite;
 }
 
 int File_Seek(int fd, int offset)
