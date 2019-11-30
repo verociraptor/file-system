@@ -23,10 +23,12 @@ int main(int argc, char *argv[])
     return -1;
   }
   
+/* XXX: Removed action to create file because I'm assuming
+	file should already be created.
   if(File_Create(path) < 0) {
     printf("ERROR: can't create file '%s'\n", path);
     return -2;
-  }
+  }*/
 
   int fd = File_Open(path);
   if(fd < 0) {
